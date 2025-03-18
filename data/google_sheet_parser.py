@@ -55,7 +55,7 @@ def update_sheet_values(service, spreadsheet_id, range_name, values):
             valueInputOption='RAW',
             body=body
         ).execute()
-        logging.info(f"Updated {result.get('updatedCells')} cells in column J")
+        logging.info(f"Updated {result.get('updatedCells')} cells in column M")
         return result
     except HttpError as e:
         if e.resp.status == 403:

@@ -24,8 +24,8 @@ load_dotenv()
 
 def website_to_llm():
     credentials_file = "data/url-to-email-445616-cebe4868914f.json"
-    spreadsheet_id = "1gySRQsDX4J-v7QBM4YiCymU7EEyEj8BmKaVpOVsFXiY"
-    urls_range = "Sheet1!F:F"
+    spreadsheet_id = "1D7vcjKF-x05bnr_UBa6LwsyNNl2hdM7K5eFtXOd25ZQ"
+    urls_range = "Sheet1!C:C"
     openai_api_key = os.getenv('OPENAI_API_KEY')
 
     try:
@@ -38,48 +38,56 @@ def website_to_llm():
 
         # PHASE 1: Scrape URLs and write content immediately
         logging.info("Phase 1: Starting URL scraping...")
-        # total_urls = len(urls_df['Website'])
-        # for idx, url in enumerate(urls_df['Website'], 1):
-        #     try:
-        #         logging.info(f"Scraping URL {idx}/{total_urls}: {url}")
-        #         content_result = process_url(url)
-        #         content_to_write = [[str(content_result) if content_result is not None else ""]]
-        #         update_sheet_values(service, spreadsheet_id, f"Sheet1!K{idx+1}:K{idx+1}", content_to_write)
-        #         logging.info(f"Successfully scraped and stored content for URL {idx}")
-        #     except Exception as e:
-        #         error_message = f"Error: {str(e)}"
-        #         logging.error(f"Error scraping URL at row {idx+1}: {error_message}")
-        #         update_sheet_values(service, spreadsheet_id, f"Sheet1!K{idx+1}", [[error_message]])
+        total_urls = len(urls_df['Website'])
+        for idx, url in enumerate(urls_df['Website'], 1):
+            try:
+                logging.info(f"Scraping URL {idx}/{total_urls}: {url}")
+                content_result = process_url(url)
+                website_content = [[str(content_result) if content_result is not None else ""]]
+                gpt_result = process_with_gpt(f"{website_content}, if can't find anything just write NA", openai_api_key)
+                update_sheet_values(service, spreadsheet_id, f"Sheet1!Q{idx+1}:Q{idx+1}", [[str(gpt_result)]])
+                logging.info(f"Successfully scraped and stored content for URL {idx}")
+            except Exception as e:
+                error_message = f"Error: {str(e)}"
+                logging.error(f"Error scraping URL at row {idx+1}: {error_message}")
+                update_sheet_values(service, spreadsheet_id, f"Sheet1!Q{idx+1}", [[error_message]])
         logging.info("Phase 1 completed: All URLs scraped and content stored.")
 
         # PHASE 2: Process with GPT
-        logging.info("Phase 2: Starting GPT processing...")
-        data_a = get_sheet_data(spreadsheet_id, "Sheet1!A1:A", credentials_file)
-        data_j = get_sheet_data(spreadsheet_id, "Sheet1!K1:K", credentials_file)
-        for i in range(len(data_a.values)):
-            try:
-                current_row = i + 2
-                content_a = data_a.values[i][0] if data_a.values[i] else "No content"
-                content_j = data_j.values[i][0] if data_j.values[i] else "No content"
-                if isinstance(content_j, list):
-                    if any("No content found" in str(item) for item in content_j):
-                        logging.info(f"Skipping row {current_row} due to 'No content found'")
-                        continue
-                elif "No content found" in str(content_j):
-                    logging.info(f"Skipping row {current_row} due to 'No content found'")
-                    continue
-                if (content_j and not content_j.startswith("Error")):
-                    logging.info(f"Processing content with GPT for row {current_row}")
-                    combined_content = f"Person Name: {content_a}\n\nWebsite Content: {content_j}"
-                    gpt_result = process_with_gpt(combined_content, openai_api_key)
-                    update_sheet_values(service, spreadsheet_id, f"Sheet1!N{current_row}:N{current_row}", [[str(gpt_result)]])
-                    logging.info(f"Successfully processed and stored GPT result for row {current_row}")
-                else:
-                    logging.warning(f"Skipping GPT processing for row {current_row} due to invalid content")
-                    update_sheet_values(service, spreadsheet_id, f"Sheet1!N{current_row}:N{current_row}", [["No valid content to analyze"]])
-            except Exception as e:
-                error_message = f"GPT Error: {str(e)}"
-                logging.error(f"Error in GPT processing for row {current_row}: {error_message}")
+        # logging.info("Phase 2: Starting GPT processing...")
+        # data_a = get_sheet_data(spreadsheet_id, "Sheet1!A1:A", credentials_file) # irrelevant just the name of the person
+        # data_g = get_sheet_data(spreadsheet_id, "Sheet1!G1:G", credentials_file) # irrelevant just the name of the person
+        # data_l = get_sheet_data(spreadsheet_id, "Sheet1!L1:L", credentials_file)
+        # for i in range(len(data_a.values)):
+        #     try:
+        #         current_row = i + 2
+        #         content_a = data_a.values[i][0] if data_a.values[i] else "No content"
+        #         content_g = data_g.values[i][0] if data_g.values[i] else "No content"
+        #         content_l = data_l.values[i][0] if data_l.values[i] else "No content"
+        #         # if isinstance(content_l, list):
+        #         #     if any("No content found" in str(item) for item in content_l):
+        #         #         logging.info(f"Skipping row {current_row} due to 'No content found'")
+        #         #         continue
+        #         # elif "No content found" in str(content_l):
+        #         #     logging.info(f"Skipping row {current_row} due to 'No content found'")
+        #         #     continue
+        #         # if not content_g or content_g == "Beta - A Set 2" or content_g == "Beta - A" or content_g == "Copy Alpha A":
+        #         #     logging.info(f"Skipping row {current_row} due to column G conditions")
+        #         #     continue
+        #         if (content_l and not content_l.startswith("Error")):
+        #             logging.info(f"Processing content with GPT for row {current_row}")
+        #             # combined_content = f"Person Name: {content_a}\n\nPodcast Transcript: {content_l}"
+        #             combined_content = f"Podcast Transcript: {content_l}"
+        #             gpt_result = process_with_gpt(combined_content, openai_api_key)
+        #             update_sheet_values(service, spreadsheet_id, f"Sheet1!P{current_row}:P{current_row}", [[str(gpt_result)]])
+        #             # update_sheet_values(service, spreadsheet_id, f"Sheet1!G{current_row}:G{current_row}", [["Beta - A Set 2"]])
+        #             logging.info(f"Successfully processed and stored GPT result for row {current_row}")
+        #         else:
+        #             logging.warning(f"Skipping GPT processing for row {current_row} due to invalid content")
+        #             update_sheet_values(service, spreadsheet_id, f"Sheet1!P{current_row}:P{current_row}", [["No valid content to analyze"]])
+        #     except Exception as e:
+        #         error_message = f"GPT Error: {str(e)}"
+        #         logging.error(f"Error in GPT processing for row {current_row}: {error_message}")
                 # update_sheet_values(service, spreadsheet_id, f"Sheet1!L{current_row}:L{current_row}", [[error_message]])
         logging.info("Phase 2 completed: All content processed with GPT.")
         logging.info("Script completed successfully")
@@ -168,4 +176,4 @@ def process_linkedin_profiles():
             driver.quit()
 
 if __name__ == "__main__":
-    process_linkedin_profiles()
+    website_to_llm()
