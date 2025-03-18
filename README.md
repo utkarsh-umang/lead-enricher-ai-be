@@ -1,4 +1,4 @@
-# URL-to-LLM Scraper
+# Lead Enricher AI Tool BE
 
 This project extracts data from organization websites and generates personalized cold emails based on the content. The input URLs are provided in a Google Sheet, and the script scrapes relevant information (e.g., "About Us" sections) to create structured data for generating emails.
 
