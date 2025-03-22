@@ -1,4 +1,4 @@
-.urltollm_env
+enricher_env
 *.json
 .DS_Store
 __pycache__

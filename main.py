@@ -1,4 +1,4 @@
-from data.google_sheet_parser import get_sheet_data, setup_google_sheets_service, update_sheet_values
+from google_utils.google_sheet_parser import get_sheet_data, setup_google_sheets_service, update_sheet_values
 from llm_utils.gpt_connector import process_with_gpt
 from utils.helpers import process_url
 from linkedin_utils.linkedin_parser import setup_driver, login_to_linkedin, check_connection_status, validate_profile, send_connection_request
