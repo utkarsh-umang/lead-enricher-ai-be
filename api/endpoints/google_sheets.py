@@ -1,10 +1,11 @@
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 import logging
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from typing import Optional
+import re
 
 # Create router
 router = APIRouter(
@@ -16,13 +17,44 @@ router = APIRouter(
 # Get logger
 logger = logging.getLogger(__name__)
 
+# Function to extract spreadsheet ID from URL
+def extract_spreadsheet_id(url):
+    """
+    Extract the spreadsheet ID from a Google Sheets URL
+    
+    Example URLs:
+    - https://docs.google.com/spreadsheets/d/1234567890abcdefg/edit#gid=0
+    - https://docs.google.com/spreadsheets/d/1234567890abcdefg/edit?usp=sharing
+    """
+    # Pattern to match spreadsheet ID in Google Sheets URL
+    pattern = r'https://docs\.google\.com/spreadsheets/d/([a-zA-Z0-9-_]+)'
+    match = re.match(pattern, url)
+    
+    if match:
+        return match.group(1)
+    else:
+        # If it's not a URL, assume it's already an ID
+        return url
+
 # Define the request models
 class SheetVerifyRequest(BaseModel):
-    spreadsheet_id: str
+    spreadsheet_url: str
+    
+    @field_validator('spreadsheet_url')
+    def validate_spreadsheet_url(cls, v):
+        if not v:
+            raise ValueError('Spreadsheet URL is required')
+        return v
 
 class ColumnCheckRequest(BaseModel):
-    spreadsheet_id: str
+    spreadsheet_url: str
     sheet_name: Optional[str] = "Sheet1"
+    
+    @field_validator('spreadsheet_url')
+    def validate_spreadsheet_url(cls, v):
+        if not v:
+            raise ValueError('Spreadsheet URL is required')
+        return v
 
 # Required column headers in exact order
 REQUIRED_COLUMNS = [
@@ -54,7 +86,10 @@ async def verify_sheet_access(request: SheetVerifyRequest):
     credentials_file = "data/url-to-email-445616-cebe4868914f.json"
     
     try:
-        logger.info(f"Verifying access to spreadsheet: {request.spreadsheet_id}")
+        # Extract spreadsheet ID from URL
+        spreadsheet_id = extract_spreadsheet_id(request.spreadsheet_url)
+        logger.info(f"Extracted spreadsheet ID: {spreadsheet_id} from URL: {request.spreadsheet_url}")
+        logger.info(f"Verifying access to spreadsheet: {spreadsheet_id}")
         
         # Set up credentials
         creds = service_account.Credentials.from_service_account_file(
@@ -67,7 +102,7 @@ async def verify_sheet_access(request: SheetVerifyRequest):
         
         # Test access by requesting spreadsheet metadata
         sheet_metadata = service.spreadsheets().get(
-            spreadsheetId=request.spreadsheet_id
+            spreadsheetId=spreadsheet_id
         ).execute()
         
         # If we get here, access is granted
@@ -75,7 +110,8 @@ async def verify_sheet_access(request: SheetVerifyRequest):
         
         return {
             "accessible": True,
-            "spreadsheet_id": request.spreadsheet_id,
+            "spreadsheet_url": request.spreadsheet_url,
+            "spreadsheet_id": spreadsheet_id,
             "title": sheet_title,
             "sheet_names": [sheet.get('properties', {}).get('title') 
                            for sheet in sheet_metadata.get('sheets', [])]
@@ -85,20 +121,20 @@ async def verify_sheet_access(request: SheetVerifyRequest):
         if error.resp.status == 404:
             return {
                 "accessible": False,
-                "spreadsheet_id": request.spreadsheet_id,
-                "error": "Spreadsheet not found. Check if the ID is correct."
+                "spreadsheet_url": request.spreadsheet_url,
+                "error": "Spreadsheet not found. Check if the URL is correct."
             }
         elif error.resp.status == 403:
             return {
                 "accessible": False,
-                "spreadsheet_id": request.spreadsheet_id,
+                "spreadsheet_url": request.spreadsheet_url,
                 "error": "Permission denied. Make sure the sheet is shared with the service account email: umang-utk@url-to-email-445616.iam.gserviceaccount.com"
             }
         else:
             logger.error(f"Error verifying sheet access: {str(error)}")
             return {
                 "accessible": False,
-                "spreadsheet_id": request.spreadsheet_id,
+                "spreadsheet_url": request.spreadsheet_url,
                 "error": f"API error: {str(error)}"
             }
     except Exception as e:
@@ -114,7 +150,10 @@ async def verify_sheet_columns(request: ColumnCheckRequest):
     credentials_file = "data/url-to-email-445616-cebe4868914f.json"
     
     try:
-        logger.info(f"Verifying columns for spreadsheet: {request.spreadsheet_id}, sheet: {request.sheet_name}")
+        # Extract spreadsheet ID from URL
+        spreadsheet_id = extract_spreadsheet_id(request.spreadsheet_url)
+        logger.info(f"Extracted spreadsheet ID: {spreadsheet_id} from URL: {request.spreadsheet_url}")
+        logger.info(f"Verifying columns for spreadsheet: {spreadsheet_id}, sheet: {request.sheet_name}")
         
         # Set up credentials
         creds = service_account.Credentials.from_service_account_file(
@@ -128,7 +167,7 @@ async def verify_sheet_columns(request: ColumnCheckRequest):
         # Get the header row (first row)
         range_name = f"{request.sheet_name}!A1:ZZ1"
         result = service.spreadsheets().values().get(
-            spreadsheetId=request.spreadsheet_id,
+            spreadsheetId=spreadsheet_id,
             range=range_name
         ).execute()
         
@@ -163,6 +202,7 @@ async def verify_sheet_columns(request: ColumnCheckRequest):
         else:
             return {
                 "valid": False,
+                "spreadsheet_url": request.spreadsheet_url,
                 "missing_columns": missing_columns,
                 "misplaced_columns": misplaced_columns,
                 "required_columns": REQUIRED_COLUMNS,
@@ -173,17 +213,20 @@ async def verify_sheet_columns(request: ColumnCheckRequest):
         if error.resp.status == 404:
             return {
                 "valid": False,
-                "error": "Spreadsheet or sheet not found. Check if the ID and sheet name are correct."
+                "spreadsheet_url": request.spreadsheet_url,
+                "error": "Spreadsheet or sheet not found. Check if the URL and sheet name are correct."
             }
         elif error.resp.status == 403:
             return {
                 "valid": False,
+                "spreadsheet_url": request.spreadsheet_url,
                 "error": "Permission denied. Make sure the sheet is shared with the service account."
             }
         else:
             logger.error(f"Error verifying sheet columns: {str(error)}")
             return {
                 "valid": False,
+                "spreadsheet_url": request.spreadsheet_url,
                 "error": f"API error: {str(error)}"
             }
     except Exception as e:
