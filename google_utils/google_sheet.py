@@ -119,21 +119,24 @@ class GoogleSheetService:
     def get_column_data(self, 
                        spreadsheet_id: str, 
                        sheet_name: str, 
-                       column_index: int) -> Tuple[bool, Union[List[str], str]]:
+                       column_index: int,
+                       start_row: int = 2) -> Tuple[bool, Union[List[str], str]]:
         """
-        Get data from a specific column
+        Get data from a specific column starting from a specified row
         
         Args:
             spreadsheet_id: The ID of the spreadsheet
             sheet_name: Name of the sheet
             column_index: Column index (0-based)
+            start_row: Row to start from (1-based, default=2 for skipping header)
             
         Returns:
             Tuple of (success, result) where result is either a list of values or error message
         """
         try:
             column_letter = COLUMN_LETTERS.get(column_index, f"Column{column_index+1}")
-            range_name = f"{sheet_name}!{column_letter}:{column_letter}"
+            # Specify range with start_row to get data from that row onwards
+            range_name = f"{sheet_name}!{column_letter}{start_row}:{column_letter}"
             
             result = self.service.spreadsheets().values().get(
                 spreadsheetId=spreadsheet_id, 
@@ -144,8 +147,8 @@ class GoogleSheetService:
             if not values:
                 return True, []  # Empty column but successful request
                 
-            # Flatten the list and skip header
-            flat_values = [item[0] if item else "" for item in values[1:]]
+            # Flatten the list - no need to skip header as we're starting from start_row
+            flat_values = [item[0] if item else "" for item in values]
             return True, flat_values
             
         except HttpError as error:

@@ -38,7 +38,7 @@ def process_url(url):
     try:
         if not is_valid_url(url):
             logging.warning(f"Invalid URL format: {url}")
-            return ["Invalid URL format"]
+            return "Invalid URL format"
         # Normalize URL (add http:// only if no protocol present)
         normalized_url = normalize_url(url)
         if normalized_url != url:
@@ -46,7 +46,7 @@ def process_url(url):
         else:
             logging.info(f"Processing {url}")
         if not normalized_url:
-            return ["Invalid URL"]
+            return "Invalid URL"
         about_link = get_about_us_link(normalized_url)
         if about_link:
             logging.info(f"Found 'About Us' page: {about_link}")
@@ -56,8 +56,8 @@ def process_url(url):
             about_content = scrape_about_us_content(normalized_url)
         if not about_content:
             logging.warning(f"No content scraped for {normalized_url}")
-            return ["No content found"]
-        return [about_content]
+            return "No content found"
+        return about_content
     except Exception as e:
         logging.error(f"Error processing URL {url}: {str(e)}")
-        return [f"Error: {str(e)}"]
+        return f"Error: {str(e)}"

@@ -78,6 +78,17 @@ REQUIRED_COLUMNS = [
     "Recent News (TBD)"
 ]
 
+REQUIRED_COLUMNS_V2 = [
+    "First Name",
+    "Last Name",
+    "Website",
+    "Contact LI Profile URL",
+    "Email",
+    "Podcast Name",
+    "Episode Link",
+    "Episode Transcript"
+]
+
 @router.post("/verify-access")
 async def verify_sheet_access(request: SheetVerifyRequest):
     """
@@ -179,12 +190,12 @@ async def verify_sheet_columns(request: ColumnCheckRequest):
         misplaced_columns = []
         
         # Check which required columns are missing
-        for column in REQUIRED_COLUMNS:
+        for column in REQUIRED_COLUMNS_V2:
             if column not in headers:
                 missing_columns.append(column)
         
         # Check if columns are in the correct order
-        for i, column in enumerate(REQUIRED_COLUMNS):
+        for i, column in enumerate(REQUIRED_COLUMNS_V2):
             if i < len(headers) and column != headers[i]:
                 misplaced_columns.append({
                     "expected": column,
@@ -205,7 +216,7 @@ async def verify_sheet_columns(request: ColumnCheckRequest):
                 "spreadsheet_url": request.spreadsheet_url,
                 "missing_columns": missing_columns,
                 "misplaced_columns": misplaced_columns,
-                "required_columns": REQUIRED_COLUMNS,
+                "required_columns": REQUIRED_COLUMNS_V2,
                 "found_headers": headers
             }
             
