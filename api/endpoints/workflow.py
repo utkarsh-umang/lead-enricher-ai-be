@@ -309,3 +309,175 @@ async def process_website_content(request: ProcessWebsiteContentRequest):
     except Exception as e:
         logger.error(f"Error processing website content: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to process: {str(e)}")
+    
+
+@router.post("/process-icp-segmentation", response_model=ProcessResponse)
+async def process_icp_segmentation(request: ProcessAvatarDeetsRequest):
+    """
+    Process customer data to perform ICP segmentation using LLM
+
+    This endpoint combines data from multiple columns (name, podcast name, 
+    transcript, website content, and industry) and uses GPT to generate
+    ICP segmentation results.
+    """
+    try:
+        # Validate API key
+        api_key = os.getenv('OPENAI_API_KEY')
+        logger.info(f"OpenAI API key present: {'Yes' if api_key else 'No'}")
+        
+        if not api_key:
+            # Try to load the key again directly
+            from dotenv import load_dotenv
+            load_dotenv()
+            api_key = os.getenv('OPENAI_API_KEY')
+            logger.info(f"Retry loading OpenAI API key - present: {'Yes' if api_key else 'No'}")
+            if not api_key:
+                raise HTTPException(status_code=500, detail="OpenAI API key not configured. Please check your .env file.")
+        
+        # Initialize services
+        sheet_service = GoogleSheetService()
+        gpt_service = GPTService(api_key)
+        
+        # Get all required column data
+        columns_to_fetch = {
+            'transcript': 7,     # Episode transcript - Column H
+            'website': 8        # Website content - Column I
+        }
+        
+        column_data = {}
+        for key, column in columns_to_fetch.items():
+            success, data = sheet_service.get_column_data(
+                request.spreadsheet_id,
+                request.sheet_name,
+                column,
+                start_row=request.start_row
+            )
+            if not success:
+                logger.error(f"Failed to get {key} data: {data}")
+                raise HTTPException(status_code=400, detail=f"Failed to get {key} data: {data}")
+            column_data[key] = data
+        
+        # Track results
+        successful_rows = []
+        failed_rows = {}
+        
+        # Determine range to process
+        total_rows = min([len(data) for data in column_data.values()])
+        start_row = request.start_row
+        end_row = min(request.end_row or (start_row + total_rows - 1), start_row + total_rows - 1)
+        
+        # Apply batch processing if specified
+        current_batch = 0
+        max_batch_rows = request.batch_size
+        
+        logger.info(f"Processing rows {start_row} to {end_row} (total: {end_row - start_row + 1})")
+        
+        # Process each row
+        for sheet_row in range(start_row, end_row + 1):
+            # Check if we've reached the batch limit
+            if max_batch_rows and current_batch >= max_batch_rows:
+                logger.info(f"Reached batch limit of {max_batch_rows} rows")
+                break
+                
+            # Calculate the corresponding index in data arrays (0-based)
+            data_index = sheet_row - start_row
+            
+            try:
+                # Skip if index is out of bounds for any data column
+                if data_index >= total_rows:
+                    logger.warning(f"Row {sheet_row} exceeds available data (index {data_index})")
+                    failed_rows[sheet_row] = "Data index out of bounds"
+                    continue
+                
+                # Get data from each column for this row
+                transcript = column_data['transcript'][data_index] if data_index < len(column_data['transcript']) else "No content"
+                website = column_data['website'][data_index] if data_index < len(column_data['website']) else "No content"
+                
+                # Skip processing if there's no valid content
+                if not website or website.startswith("Error") or "No Content found" in website:
+                    website_content = "No website content"
+                else:
+                    website_content = website
+                
+                # Combine all data
+                combined_content = f"Podcast Transcript: {transcript}\n\nWebsite Content: {website_content}"
+                
+                # Process with GPT using the ICP segmentation prompt
+                logger.info(f"Processing ICP segmentation for row {sheet_row}")
+                
+                # Get the ICP segmentation prompt
+                icp_prompt = """
+                Task: Fill the given keys of the form using an episode transcript and website content if any, if no information is available or cannot be deduced from the transcript, just pass NA
+                1. Sub-Industries (examples - Commercial Real Estate, Property Management Companies, Residential Real Estate Agents, Real Estate Developers, Etc)
+                2. Company Size
+                3. Location
+                4. Revenue
+                5. ICP Type options - ["NA", "Syndication", "REIT", "Multifamily"]
+                
+                Topic: ICP classification for Real Estate Industry
+                Style: Business
+                Tone: Confident
+                Audience: Business audience
+                Output Format:
+                1. Sub-Industries -
+                2. Company Size - 
+                3. Location - 
+                4. Revenue - 
+                5. ICP Type - 
+                """
+                
+                gpt_result = gpt_service.process_content(combined_content, icp_prompt)
+                
+                if not gpt_result["success"]:
+                    logger.error(f"GPT processing failed for row {sheet_row}: {gpt_result.get('error')}")
+                    failed_rows[sheet_row] = gpt_result.get('error', 'Unknown GPT error')
+                    continue
+                
+                # Update the ICP segmentation results column (Column K)
+                update_success, update_message = sheet_service.update_cell(
+                    request.spreadsheet_id,
+                    request.sheet_name,
+                    sheet_row,
+                    9,
+                    gpt_result["result"]
+                )
+                
+                if update_success:
+                    logger.info(f"Successfully updated ICP segmentation for row {sheet_row}")
+                    successful_rows.append(sheet_row)
+                    current_batch += 1
+                else:
+                    logger.error(f"Failed to update ICP segmentation for row {sheet_row}: {update_message}")
+                    failed_rows[sheet_row] = f"Failed to update: {update_message}"
+                
+            except Exception as e:
+                logger.error(f"Error processing row {sheet_row}: {str(e)}")
+                failed_rows[sheet_row] = str(e)
+        
+        # Determine final status
+        total_processed = len(successful_rows) + len(failed_rows)
+        status = STATUS_SUCCESS
+        
+        if total_processed == 0:
+            status = STATUS_ERROR
+            message = "No rows were processed"
+        elif len(failed_rows) > 0 and len(successful_rows) > 0:
+            status = STATUS_PARTIAL
+            message = f"Partially successful: {len(successful_rows)} rows updated, {len(failed_rows)} rows failed"
+        elif len(successful_rows) > 0:
+            message = f"Successfully updated {len(successful_rows)} rows"
+        else:
+            status = STATUS_ERROR
+            message = f"Failed to update any rows. {len(failed_rows)} rows attempted"
+        
+        return ProcessResponse(
+            status=status,
+            processed_rows=total_processed,
+            successful_rows=successful_rows,
+            failed_rows=failed_rows,
+            message=message
+        )
+        
+    except Exception as e:
+        logger.error(f"Error processing ICP segmentation: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to process: {str(e)}")
