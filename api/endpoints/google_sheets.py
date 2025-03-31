@@ -4,7 +4,7 @@ import logging
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
-from typing import Optional
+from typing import Optional, Dict
 import re
 
 # Create router
@@ -86,7 +86,10 @@ REQUIRED_COLUMNS_V2 = [
     "Email",
     "Podcast Name",
     "Episode Link",
-    "Episode Transcript"
+    "Episode Transcript",
+    "Website Content",
+    "Industry",
+    "Custom Message"
 ]
 
 @router.post("/verify-access")
@@ -243,3 +246,138 @@ async def verify_sheet_columns(request: ColumnCheckRequest):
     except Exception as e:
         logger.error(f"Error verifying sheet columns: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to verify columns: {str(e)}")
+
+class LastRowRequest(BaseModel):
+    spreadsheet_url: str
+    sheet_name: Optional[str] = "Sheet1"
+    use_version: Optional[str] = "v2"
+    
+    @field_validator('spreadsheet_url')
+    def validate_spreadsheet_url(cls, v):
+        if not v:
+            raise ValueError('Spreadsheet URL is required')
+        return v
+    
+    @field_validator('use_version')
+    def validate_version(cls, v):
+        if v not in ['v1', 'v2']:
+            raise ValueError('Version must be either "v1" or "v2"')
+        return v
+
+@router.post("/get-last-filled-rows")
+async def get_last_filled_rows(request: LastRowRequest):
+    """
+    Get the last filled row for each of the required columns
+    """
+    credentials_file = "data/url-to-email-445616-cebe4868914f.json"
+    
+    try:
+        # Extract spreadsheet ID from URL
+        spreadsheet_id = extract_spreadsheet_id(request.spreadsheet_url)
+        logger.info(f"Extracted spreadsheet ID: {spreadsheet_id} from URL: {request.spreadsheet_url}")
+        logger.info(f"Getting last filled rows for spreadsheet: {spreadsheet_id}, sheet: {request.sheet_name}")
+        
+        # Determine which required columns to use
+        if request.use_version == "v1":
+            required_columns = REQUIRED_COLUMNS
+        else:  # v2
+            required_columns = REQUIRED_COLUMNS_V2
+        
+        # Set up credentials
+        creds = service_account.Credentials.from_service_account_file(
+            credentials_file,
+            scopes=["https://www.googleapis.com/auth/spreadsheets.readonly"]
+        )
+        
+        # Build the Sheets API service
+        service = build('sheets', 'v4', credentials=creds)
+        
+        # First, get the header row to find column positions
+        range_name = f"{request.sheet_name}!A1:ZZ1"
+        result = service.spreadsheets().values().get(
+            spreadsheetId=spreadsheet_id,
+            range=range_name
+        ).execute()
+        
+        # Extract header values
+        headers = result.get('values', [[]])[0] if result.get('values') else []
+        
+        # Map required column names to their positions (0-based index)
+        column_positions = {}
+        for i, header in enumerate(headers):
+            if header in required_columns:
+                column_positions[header] = i
+        
+        # Now get all data to find the last filled row for each column
+        range_name = f"{request.sheet_name}"
+        result = service.spreadsheets().values().get(
+            spreadsheetId=spreadsheet_id,
+            range=range_name
+        ).execute()
+        
+        values = result.get('values', [])
+        if not values:
+            return {
+                "error": "No data found in the sheet",
+                "spreadsheet_url": request.spreadsheet_url,
+                "sheet_name": request.sheet_name
+            }
+        
+        # Find the last row with data for each column
+        last_filled_rows: Dict[str, Dict] = {}
+        total_rows = len(values)
+        
+        for column_name, column_index in column_positions.items():
+            last_row = 0
+            
+            # Start from row 1 (skip headers)
+            for row_index in range(1, total_rows):
+                row = values[row_index]
+                # Check if this column has a value in this row
+                if column_index < len(row) and row[column_index] and row[column_index].strip():
+                    last_row = row_index + 1  # Add 1 because spreadsheet rows are 1-indexed
+            
+            last_filled_rows[column_name] = {
+                "last_row": last_row
+            }
+        
+        # Calculate the total number of filled rows and columns
+        columns_with_data = 0
+        max_row_with_data = 0
+        
+        for column_info in last_filled_rows.values():
+            if column_info["last_row"] > 0:
+                columns_with_data += 1
+                max_row_with_data = max(max_row_with_data, column_info["last_row"])
+        
+        return {
+            "spreadsheet_url": request.spreadsheet_url,
+            "sheet_name": request.sheet_name,
+            "version": request.use_version,
+            "total_rows": total_rows,
+            "columns_with_data": columns_with_data,
+            "max_row_with_data": max_row_with_data,
+            "last_filled_rows": last_filled_rows,
+            "column_positions": column_positions
+        }
+            
+    except HttpError as error:
+        logger.error(f"HTTP Error getting last filled rows: {str(error)}")
+        if error.resp.status == 404:
+            return {
+                "error": "Spreadsheet or sheet not found. Check if the URL and sheet name are correct.",
+                "spreadsheet_url": request.spreadsheet_url
+            }
+        elif error.resp.status == 403:
+            return {
+                "error": "Permission denied. Make sure the sheet is shared with the service account.",
+                "spreadsheet_url": request.spreadsheet_url
+            }
+        else:
+            return {
+                "error": f"API error: {str(error)}",
+                "spreadsheet_url": request.spreadsheet_url
+            }
+    except Exception as e:
+        logger.error(f"Error getting last filled rows: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get last filled rows: {str(e)}")
