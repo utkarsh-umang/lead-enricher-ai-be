@@ -603,7 +603,7 @@ async def process_outreach(request: ProcessAvatarDeetsRequest):
 
                 Email Template:
 
-                "[Name of the Person] - watched your episode about [Personalisation] on the [Name of Pod]. Honestly so good.
+                [Name of the Person] - watched your episode about [Personalisation] on the [Name of Pod] podcast. Honestly so good.
 
                 We're Scale Brands Lab—an invite-only firm that helps investor-friendly organizations gain major media exposure.
 
@@ -613,11 +613,11 @@ async def process_outreach(request: ProcessAvatarDeetsRequest):
 
                 Without a shadow of a doubt, we can explode your material. There's so much value there.
 
-                Would you like to get more info?"
+                Would you like to get more info?
 
                 Example Email:
 
-                "Jason - watched your episode about "starting the clock" on the Real Estate Today. Honestly so good.
+                Jason - watched your episode about "starting the clock" on the Real Estate Today. Honestly so good.
 
                 We're Scale Brands Lab—an invite-only firm that helps investor-friendly organizations gain major media exposure.
 
@@ -627,7 +627,7 @@ async def process_outreach(request: ProcessAvatarDeetsRequest):
 
                 Without a shadow of a doubt, we can explode your material. There's so much value there.
 
-                Would you like to get more info?"
+                Would you like to get more info?
 
                 Instructions:
 
