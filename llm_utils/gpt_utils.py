@@ -83,3 +83,14 @@ class GPTService:
                 "success": False,
                 "error": f"GPT processing error: {str(e)}"
             }
+        
+class PerplexityService(GPTService):
+    """Service for interacting with Perplexity API using GPT client interface"""
+    
+    def __init__(self, api_key: Optional[str] = None):
+        """Initialize the Perplexity service with API key"""
+        self.api_key = api_key or os.getenv('PERPLEXITY_API_KEY')
+        if not self.api_key:
+            logger.warning("No Perplexity API key provided. Set PERPLEXITY_API_KEY environment variable.")
+        # Initialize client with Perplexity base URL
+        self.client = OpenAI(api_key=self.api_key, base_url="https://api.perplexity.ai") 

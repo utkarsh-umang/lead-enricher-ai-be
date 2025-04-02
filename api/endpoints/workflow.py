@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, HttpUrl
 import logging
 from typing import List, Optional, Dict
 import os
@@ -16,6 +16,7 @@ from data.constants import (
     STATUS_PARTIAL,
     DEFAULT_BATCH_SIZE
 )
+from youtube_transcript_api import YouTubeTranscriptApi, NoTranscriptFound, TranscriptsDisabled, VideoUnavailable
 
 # Create router
 router = APIRouter(
@@ -56,6 +57,14 @@ class ProcessResponse(BaseModel):
     successful_rows: List[int]
     failed_rows: Dict[int, str]
     message: str
+
+class YoutubeTranscriptRequest(BaseModel):
+    youtube_url: HttpUrl
+
+class YoutubeTranscriptResponse(BaseModel):
+    video_id: str
+    transcript: str
+    status: str
 
 # Route for processing Avatar Deets
 @router.post("/process-avatar-deets", response_model=ProcessResponse)
@@ -695,3 +704,61 @@ async def process_outreach(request: ProcessAvatarDeetsRequest):
     except Exception as e:
         logger.error(f"Error processing outreach: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to process: {str(e)}")
+
+def extract_video_id(youtube_url):
+    """Extract the video ID from a YouTube URL."""
+    # Handle standard YouTube URLs
+    if "youtube.com/watch" in youtube_url:
+        query_string = youtube_url.split("?")[1]
+        params = {param.split("=")[0]: param.split("=")[1] for param in query_string.split("&")}
+        if "v" in params:
+            return params["v"]
+    # Handle shortened youtu.be URLs
+    elif "youtu.be/" in youtube_url:
+        return youtube_url.split("youtu.be/")[1].split("?")[0]
+    # Handle YouTube embed URLs
+    elif "youtube.com/embed/" in youtube_url:
+        return youtube_url.split("youtube.com/embed/")[1].split("?")[0]
+    
+    raise ValueError("Could not extract video ID from URL")
+
+@router.post("/youtube-transcript", response_model=YoutubeTranscriptResponse)
+async def get_youtube_transcript(request: YoutubeTranscriptRequest):
+    """
+    Get transcript for a YouTube video using youtube-transcript-api.
+    
+    This endpoint extracts the video ID from the provided YouTube URL,
+    then fetches the transcript directly from YouTube.
+    """
+    try:
+        # Extract video ID from the URL
+        video_id = extract_video_id(str(request.youtube_url))
+        logger.info(f"Processing transcript for YouTube video ID: {video_id}")
+        
+        # Fetch transcript - using get_transcript() instead of fetch()
+        try:
+            transcript_items = YouTubeTranscriptApi.get_transcript(video_id=video_id)
+            transcript_text = " ".join([item["text"] for item in transcript_items])
+            
+            return YoutubeTranscriptResponse(
+                video_id=video_id,
+                transcript=transcript_text,
+                status="success"
+            )
+            
+        except NoTranscriptFound:
+            logger.error(f"No transcript found for video ID: {video_id}")
+            raise HTTPException(status_code=404, detail="No transcript found for this video")
+        except TranscriptsDisabled:
+            logger.error(f"Transcripts are disabled for video ID: {video_id}")
+            raise HTTPException(status_code=404, detail="Transcripts are disabled for this video")
+        except VideoUnavailable:
+            logger.error(f"Video unavailable for ID: {video_id}")
+            raise HTTPException(status_code=404, detail="The video is unavailable")
+            
+    except ValueError as e:
+        logger.error(f"Invalid YouTube URL: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error processing transcript: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to process transcript: {str(e)}")
