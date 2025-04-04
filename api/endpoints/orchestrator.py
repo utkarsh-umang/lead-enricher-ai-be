@@ -315,7 +315,7 @@ async def orchestrate_workflow(request: OrchestratorRequest, job_id: str):
                     if podcast_link_last_row >= row and podcast_transcript_last_row < row:
                         print(f"[DEBUG] Phase 1: Row {row} needs podcast transcript processing")
                         result = await process_podcast_transcript(row, request, client, job_id)
-                        success = result.get("status") == "success"
+                        success = (result.get("status", "").lower() == "success" or "Successfully" in result.get("message", ""))
                         row_log["phase1_success"]["podcast_transcript"] = success
                         if success:
                             processed_transcript_rows.append(row)
@@ -332,7 +332,7 @@ async def orchestrate_workflow(request: OrchestratorRequest, job_id: str):
                     if website_last_row >= row and website_content_last_row < row:
                         print(f"[DEBUG] Phase 1: Row {row} needs website content processing")
                         result = await process_website_content(row, request, client, job_id)
-                        success = result.get("status") == "success"
+                        success = (result.get("status", "").lower() == "success" or "Successfully" in result.get("message", ""))
                         row_log["phase1_success"]["website_content"] = success
                         if success:
                             processed_website_content_rows.append(row)
@@ -346,7 +346,7 @@ async def orchestrate_workflow(request: OrchestratorRequest, job_id: str):
                     if podcast_transcript_last_row >= row and industry_last_row < row:
                         print(f"[DEBUG] Phase 1: Row {row} needs industry processing")
                         result = await process_industry(row, request, client, job_id)
-                        success = result.get("status") == "success"
+                        success = (result.get("status", "").lower() == "success" or "Successfully" in result.get("message", ""))
                         row_log["phase1_success"]["industry"] = success
                         if success:
                             processed_industry_rows.append(row)
@@ -423,8 +423,10 @@ async def orchestrate_workflow(request: OrchestratorRequest, job_id: str):
                         # Process custom email
                         result = await process_custom_email(row, request, client, job_id)
                         
+                        success = (result.get("status", "").lower() == "success" or "Successfully" in result.get("message", ""))
+                        
                         # Store result
-                        active_jobs[job_id]["progress"][row]["phase2_success"]["custom_email"] = (result.get("status") == "success")
+                        active_jobs[job_id]["progress"][row]["phase2_success"]["custom_email"] = success
                         
                     except Exception as e:
                         print(f"[DEBUG] Error processing custom email for row {row} in Phase 2: {str(e)}")
@@ -500,7 +502,7 @@ async def process_row(row: int, column_status: Dict, request: OrchestratorReques
     if podcast_link_last_row >= row and podcast_transcript_last_row < row:
         print(f"[DEBUG] process_row: Row {row} needs podcast transcript processing")
         transcript_result = await process_podcast_transcript(row, request, client, job_id)
-        transcript_processed = transcript_result.get("status") == "success"
+        transcript_processed = (transcript_result.get("status", "").lower() == "success" or "Successfully" in transcript_result.get("message", ""))
         row_log["processed_columns"]["podcast_transcript"] = transcript_processed
         print(f"[DEBUG] process_row: Podcast transcript processed successfully? {transcript_processed}")
     else:
@@ -522,7 +524,7 @@ async def process_row(row: int, column_status: Dict, request: OrchestratorReques
     if website_last_row >= row and website_content_last_row < row:
         print(f"[DEBUG] process_row: Row {row} needs website content processing")
         website_result = await process_website_content(row, request, client, job_id)
-        website_content_processed = website_result.get("status") in ["success", "SUCCESS", "PARTIAL"]
+        website_content_processed = (website_result.get("status", "").lower() == "success" or "Successfully" in website_result.get("message", ""))
         row_log["processed_columns"]["website_content"] = website_content_processed
         print(f"[DEBUG] process_row: Website content processed successfully? {website_content_processed}")
     else:
@@ -540,7 +542,7 @@ async def process_row(row: int, column_status: Dict, request: OrchestratorReques
     if podcast_transcript_last_row >= row and industry_last_row < row:
         print(f"[DEBUG] process_row: Row {row} needs industry processing")
         industry_result = await process_industry(row, request, client, job_id)
-        industry_processed = industry_result.get("status") in ["success", "SUCCESS", "PARTIAL"]
+        industry_processed = (industry_result.get("status", "").lower() == "success" or "Successfully" in industry_result.get("message", ""))
         row_log["processed_columns"]["industry"] = industry_processed
         print(f"[DEBUG] process_row: Industry processed successfully? {industry_processed}")
     else:
@@ -572,7 +574,7 @@ async def process_row(row: int, column_status: Dict, request: OrchestratorReques
     if dependencies_met:
         print(f"[DEBUG] process_row: Row {row} needs custom email processing")
         custom_email_result = await process_custom_email(row, request, client, job_id)
-        custom_email_processed = custom_email_result.get("status") in ["success", "SUCCESS", "PARTIAL"]
+        custom_email_processed = (custom_email_result.get("status", "").lower() == "success" or "Successfully" in custom_email_result.get("message", ""))
         row_log["processed_columns"]["custom_email"] = custom_email_processed
         print(f"[DEBUG] process_row: Custom email processed successfully? {custom_email_processed}")
     else:
