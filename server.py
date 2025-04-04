@@ -6,6 +6,7 @@ from logging.handlers import RotatingFileHandler
 from api.endpoints.google_sheets import router as google_sheet_router
 from api.endpoints.workflow import router as workflow_router
 from api.endpoints.orchestrator import router as orchestrator_router
+from api.endpoints.authentication import router as auth_router
 
 # Configure logging with rotation
 os.makedirs('data/logs', exist_ok=True)
@@ -57,3 +58,4 @@ async def root():
 app.include_router(google_sheet_router)
 app.include_router(workflow_router)
 app.include_router(orchestrator_router)
+app.include_router(auth_router)
