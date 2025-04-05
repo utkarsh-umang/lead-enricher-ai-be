@@ -68,7 +68,7 @@ COLUMN_NAME_MAPPING = {
 }
 
 # Update all API endpoint URLs to match your router
-API_BASE_URL = ""  # No /api prefix
+API_BASE_URL = "https://lead-enricher-ai-be-52034488741.us-central1.run.app"  # No /api prefix
 
 # API endpoint mapping
 API_ENDPOINTS = {
