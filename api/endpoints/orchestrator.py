@@ -68,7 +68,7 @@ COLUMN_NAME_MAPPING = {
 }
 
 # Update all API endpoint URLs to match your router
-API_BASE_URL = "http://localhost:8000"  # No /api prefix
+API_BASE_URL = ""  # No /api prefix
 
 # API endpoint mapping
 API_ENDPOINTS = {
