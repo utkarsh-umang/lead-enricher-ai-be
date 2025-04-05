@@ -1,5 +1,5 @@
 # Google Sheets Constants
-CREDENTIALS_FILE = "data/url-to-email-445616-cebe4868914f.json"
+CREDENTIALS_FILE = "/data/url-to-email-445616-cebe4868914f.json"
 DEFAULT_SHEET_NAME = "Sheet1"
 
 # Sheet Column Indices (0-based)

@@ -97,7 +97,7 @@ async def verify_sheet_access(request: SheetVerifyRequest):
     """
     Verify if the Google Sheet is accessible by the service account
     """
-    credentials_file = "data/url-to-email-445616-cebe4868914f.json"
+    credentials_file = "/data/url-to-email-445616-cebe4868914f.json"
     
     try:
         # Extract spreadsheet ID from URL
@@ -161,7 +161,7 @@ async def verify_sheet_columns(request: ColumnCheckRequest):
     """
     Verify if the Google Sheet has the required columns in the correct order
     """
-    credentials_file = "data/url-to-email-445616-cebe4868914f.json"
+    credentials_file = "/data/url-to-email-445616-cebe4868914f.json"
     
     try:
         # Extract spreadsheet ID from URL
@@ -269,7 +269,7 @@ async def get_last_filled_rows(request: LastRowRequest):
     """
     Get the last filled row for each of the required columns
     """
-    credentials_file = "data/url-to-email-445616-cebe4868914f.json"
+    credentials_file = "/data/url-to-email-445616-cebe4868914f.json"
     
     try:
         # Extract spreadsheet ID from URL

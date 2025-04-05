@@ -23,7 +23,7 @@ logging.basicConfig(
 load_dotenv()
 
 def website_to_llm():
-    credentials_file = "data/url-to-email-445616-cebe4868914f.json"
+    credentials_file = "/data/url-to-email-445616-cebe4868914f.json"
     spreadsheet_id = "1EgCyXlFrx-WpyTIBAJnglhNrL8S7O-JEjWvR2OXQYCc"
     urls_range = "Sheet1!C:C"
     openai_api_key = os.getenv('OPENAI_API_KEY')
@@ -105,7 +105,7 @@ def website_to_llm():
 
 def process_linkedin_profiles():
     """Process LinkedIn profiles from the Google Sheet"""
-    credentials_file = "data/url-to-email-445616-cebe4868914f.json"
+    credentials_file = "/data/url-to-email-445616-cebe4868914f.json"
     spreadsheet_id = "1D7vcjKF-x05bnr_UBa6LwsyNNl2hdM7K5eFtXOd25ZQ"
     daily_requests_sent = 0
     MAX_DAILY_REQUESTS = 15
