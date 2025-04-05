@@ -1,19 +1,22 @@
-FROM python:3.10-slim
+FROM python:3.9-slim
 
 WORKDIR /app
 
-# Copy requirements first to leverage Docker cache
+# Copy requirements first for better caching
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY . .
 
-# Create data directory for credentials and logs
-RUN mkdir -p data/logs
+# Create data directory explicitly
+RUN mkdir -p data
 
-# Set environment variables
-ENV PYTHONUNBUFFERED=1
+# Create startup script that uses PORT environment variable
+RUN echo '#!/bin/bash\n\
+PORT=${PORT:-8000}\n\
+exec uvicorn server:app --host 0.0.0.0 --port ${PORT}' > /app/start.sh && \
+chmod +x /app/start.sh
 
-# Run the application
-CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8080"]
+# Run the startup script
+CMD ["/app/start.sh"]
