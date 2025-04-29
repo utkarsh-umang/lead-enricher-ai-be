@@ -7,6 +7,7 @@ from api.endpoints.google_sheets import router as google_sheet_router
 from api.endpoints.workflow import router as workflow_router
 from api.endpoints.orchestrator import router as orchestrator_router
 from api.endpoints.authentication import router as auth_router
+from utils.db import MongoDB
 
 # Configure logging with rotation
 os.makedirs('data/logs', exist_ok=True)
@@ -59,3 +60,41 @@ app.include_router(google_sheet_router)
 app.include_router(workflow_router)
 app.include_router(orchestrator_router)
 app.include_router(auth_router)
+
+@app.get("/db-status")
+async def db_status():
+    """Check MongoDB connection status"""
+    db = MongoDB.get_db()
+    if db is not None:
+        try:
+            # Try a simple operation to verify connection
+            collections = db.list_collection_names()
+            return {
+                "status": "connected",
+                "database": db.name,
+                "collections": collections
+            }
+        except Exception as e:
+            return {
+                "status": "error",
+                "error": str(e)
+            }
+    else:
+        return {
+            "status": "disconnected"
+        }
+
+# Startup and shutdown events
+@app.on_event("startup")
+def startup_db_client():
+    """Connect to MongoDB on startup"""
+    if MongoDB.connect():
+        logger.info("MongoDB connection established")
+    else:
+        logger.warning("Failed to connect to MongoDB - some features may not work")
+
+@app.on_event("shutdown")
+def shutdown_db_client():
+    """Close MongoDB connection on shutdown"""
+    MongoDB.close()
+    logger.info("MongoDB connection closed")
