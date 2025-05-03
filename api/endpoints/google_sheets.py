@@ -4,8 +4,10 @@ import logging
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
-from typing import Optional, Dict
+from typing import Optional, Dict, Literal
 import re
+from datetime import datetime
+from utils.db import MongoDB
 
 # Create router
 router = APIRouter(
@@ -16,6 +18,25 @@ router = APIRouter(
 
 # Get logger
 logger = logging.getLogger(__name__)
+
+# Sheet Status Enum
+SheetStatus = Literal[
+    "NO_ACCESS", 
+    "CONNECTED", 
+    "ENRICHMENT_STARTED", 
+    "ENRICHMENT_COMPLETED", 
+    "OUTREACH_STARTED", 
+    "COMPLETED"
+]
+
+# Helper function to get database connection
+def get_database():
+    """Get database connection safely"""
+    db = MongoDB.get_db()
+    if db is None:
+        logger.error("Failed to get database connection")
+        raise HTTPException(status_code=500, detail="Database connection error")
+    return db
 
 # Function to extract spreadsheet ID from URL
 def extract_spreadsheet_id(url):
@@ -39,21 +60,35 @@ def extract_spreadsheet_id(url):
 # Define the request models
 class SheetVerifyRequest(BaseModel):
     spreadsheet_url: str
+    agency_id: str
     
     @field_validator('spreadsheet_url')
     def validate_spreadsheet_url(cls, v):
         if not v:
             raise ValueError('Spreadsheet URL is required')
         return v
+    
+    @field_validator('agency_id')
+    def validate_agency_id(cls, v):
+        if not v:
+            raise ValueError('Agency ID is required')
+        return v
 
 class ColumnCheckRequest(BaseModel):
     spreadsheet_url: str
     sheet_name: Optional[str] = "Sheet1"
+    agency_id: str
     
     @field_validator('spreadsheet_url')
     def validate_spreadsheet_url(cls, v):
         if not v:
             raise ValueError('Spreadsheet URL is required')
+        return v
+    
+    @field_validator('agency_id')
+    def validate_agency_id(cls, v):
+        if not v:
+            raise ValueError('Agency ID is required')
         return v
 
 # Required column headers in exact order
@@ -92,18 +127,60 @@ REQUIRED_COLUMNS_V2 = [
     "Custom Message"
 ]
 
+def update_or_create_sheet_record(agency_id, spreadsheet_url, spreadsheet_id, sheet_name, status):
+    """
+    Update an existing sheet record or create a new one
+    """
+    now = datetime.utcnow()
+    
+    # Get database connection
+    db = get_database()
+    
+    # Try to find an existing record for this agency and sheet
+    existing_record = db.agency_sheets.find_one({
+        "agency_id": agency_id,
+        "sheet_id": spreadsheet_id
+    })
+    
+    if existing_record:
+        # Update existing record
+        db.agency_sheets.update_one(
+            {"_id": existing_record["_id"]},
+            {
+                "$set": {
+                    "status": status,
+                    "sheet_url": spreadsheet_url,  # Update URL in case it changed
+                    "sheet_name": sheet_name,      # Add/update sheet name
+                    "updated_at": now
+                }
+            }
+        )
+        logger.info(f"Updated sheet record for agency {agency_id}, sheet {spreadsheet_id} with status {status}")
+    else:
+        # Create new record
+        db.agency_sheets.insert_one({
+            "agency_id": agency_id,
+            "sheet_url": spreadsheet_url,
+            "sheet_id": spreadsheet_id,
+            "sheet_name": sheet_name,  # Include sheet name in new records
+            "status": status,
+            "created_at": now,
+            "updated_at": now
+        })
+        logger.info(f"Created new sheet record for agency {agency_id}, sheet {spreadsheet_id} with status {status}")
+
 @router.post("/verify-access")
-async def verify_sheet_access(request: SheetVerifyRequest):
+def verify_sheet_access(request: SheetVerifyRequest):
     """
-    Verify if the Google Sheet is accessible by the service account
+    Verify if the Google Sheet is accessible by the service account and update the database
     """
-    credentials_file = "/data/url-to-email-445616-cebe4868914f.json"
+    credentials_file = "data/url-to-email-445616-cebe4868914f.json"
     
     try:
         # Extract spreadsheet ID from URL
         spreadsheet_id = extract_spreadsheet_id(request.spreadsheet_url)
         logger.info(f"Extracted spreadsheet ID: {spreadsheet_id} from URL: {request.spreadsheet_url}")
-        logger.info(f"Verifying access to spreadsheet: {spreadsheet_id}")
+        logger.info(f"Verifying access to spreadsheet: {spreadsheet_id} for agency: {request.agency_id}")
         
         # Set up credentials
         creds = service_account.Credentials.from_service_account_file(
@@ -122,42 +199,63 @@ async def verify_sheet_access(request: SheetVerifyRequest):
         # If we get here, access is granted
         sheet_title = sheet_metadata.get('properties', {}).get('title', 'Untitled')
         
+        # Update database with CONNECTED status
+        update_or_create_sheet_record(
+            agency_id=request.agency_id,
+            spreadsheet_url=request.spreadsheet_url,
+            spreadsheet_id=spreadsheet_id,
+            sheet_name=sheet_title,  # Save the sheet name
+            status="CONNECTED"
+        )
+        
         return {
             "accessible": True,
             "spreadsheet_url": request.spreadsheet_url,
             "spreadsheet_id": spreadsheet_id,
+            "agency_id": request.agency_id,
+            "status": "CONNECTED",
             "title": sheet_title,
             "sheet_names": [sheet.get('properties', {}).get('title') 
                            for sheet in sheet_metadata.get('sheets', [])]
         }
         
     except HttpError as error:
+        status = "NO_ACCESS"
+        error_message = ""
+        
         if error.resp.status == 404:
-            return {
-                "accessible": False,
-                "spreadsheet_url": request.spreadsheet_url,
-                "error": "Spreadsheet not found. Check if the URL is correct."
-            }
+            error_message = "Spreadsheet not found. Check if the URL is correct."
         elif error.resp.status == 403:
-            return {
-                "accessible": False,
-                "spreadsheet_url": request.spreadsheet_url,
-                "error": "Permission denied. Make sure the sheet is shared with the service account email: umang-utk@url-to-email-445616.iam.gserviceaccount.com"
-            }
+            error_message = "Permission denied. Make sure the sheet is shared with the service account email: umang-utk@url-to-email-445616.iam.gserviceaccount.com"
         else:
-            logger.error(f"Error verifying sheet access: {str(error)}")
-            return {
-                "accessible": False,
-                "spreadsheet_url": request.spreadsheet_url,
-                "error": f"API error: {str(error)}"
-            }
+            error_message = f"API error: {str(error)}"
+        
+        # Update database with NO_ACCESS status
+        # Use a placeholder for sheet_name in error cases
+        update_or_create_sheet_record(
+            agency_id=request.agency_id,
+            spreadsheet_url=request.spreadsheet_url,
+            spreadsheet_id=spreadsheet_id,
+            sheet_name="Unknown Sheet",  # Use placeholder for errors
+            status=status
+        )
+        
+        logger.error(f"Error verifying sheet access: {error_message}")
+        return {
+            "accessible": False,
+            "spreadsheet_url": request.spreadsheet_url,
+            "spreadsheet_id": spreadsheet_id,
+            "agency_id": request.agency_id,
+            "status": status,
+            "error": error_message
+        }
+            
     except Exception as e:
         logger.error(f"Error verifying sheet access: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to verify access: {str(e)}")
 
-
 @router.post("/verify-columns")
-async def verify_sheet_columns(request: ColumnCheckRequest):
+def verify_sheet_columns(request: ColumnCheckRequest):
     """
     Verify if the Google Sheet has the required columns in the correct order
     """
@@ -167,7 +265,7 @@ async def verify_sheet_columns(request: ColumnCheckRequest):
         # Extract spreadsheet ID from URL
         spreadsheet_id = extract_spreadsheet_id(request.spreadsheet_url)
         logger.info(f"Extracted spreadsheet ID: {spreadsheet_id} from URL: {request.spreadsheet_url}")
-        logger.info(f"Verifying columns for spreadsheet: {spreadsheet_id}, sheet: {request.sheet_name}")
+        logger.info(f"Verifying columns for spreadsheet: {spreadsheet_id}, sheet: {request.sheet_name}, agency: {request.agency_id}")
         
         # Set up credentials
         creds = service_account.Credentials.from_service_account_file(
@@ -210,12 +308,14 @@ async def verify_sheet_columns(request: ColumnCheckRequest):
         if not missing_columns and not misplaced_columns:
             return {
                 "valid": True,
+                "agency_id": request.agency_id,
                 "message": "All required columns are present in the correct order",
                 "found_headers": headers
             }
         else:
             return {
                 "valid": False,
+                "agency_id": request.agency_id,
                 "spreadsheet_url": request.spreadsheet_url,
                 "missing_columns": missing_columns,
                 "misplaced_columns": misplaced_columns,
@@ -227,12 +327,14 @@ async def verify_sheet_columns(request: ColumnCheckRequest):
         if error.resp.status == 404:
             return {
                 "valid": False,
+                "agency_id": request.agency_id,
                 "spreadsheet_url": request.spreadsheet_url,
                 "error": "Spreadsheet or sheet not found. Check if the URL and sheet name are correct."
             }
         elif error.resp.status == 403:
             return {
                 "valid": False,
+                "agency_id": request.agency_id,
                 "spreadsheet_url": request.spreadsheet_url,
                 "error": "Permission denied. Make sure the sheet is shared with the service account."
             }
@@ -240,6 +342,7 @@ async def verify_sheet_columns(request: ColumnCheckRequest):
             logger.error(f"Error verifying sheet columns: {str(error)}")
             return {
                 "valid": False,
+                "agency_id": request.agency_id,
                 "spreadsheet_url": request.spreadsheet_url,
                 "error": f"API error: {str(error)}"
             }
@@ -251,6 +354,7 @@ class LastRowRequest(BaseModel):
     spreadsheet_url: str
     sheet_name: Optional[str] = "Sheet1"
     use_version: Optional[str] = "v2"
+    agency_id: str
     
     @field_validator('spreadsheet_url')
     def validate_spreadsheet_url(cls, v):
@@ -263,9 +367,15 @@ class LastRowRequest(BaseModel):
         if v not in ['v1', 'v2']:
             raise ValueError('Version must be either "v1" or "v2"')
         return v
+    
+    @field_validator('agency_id')
+    def validate_agency_id(cls, v):
+        if not v:
+            raise ValueError('Agency ID is required')
+        return v
 
 @router.post("/get-last-filled-rows")
-async def get_last_filled_rows(request: LastRowRequest):
+def get_last_filled_rows(request: LastRowRequest):
     """
     Get the last filled row for each of the required columns
     """
@@ -275,7 +385,7 @@ async def get_last_filled_rows(request: LastRowRequest):
         # Extract spreadsheet ID from URL
         spreadsheet_id = extract_spreadsheet_id(request.spreadsheet_url)
         logger.info(f"Extracted spreadsheet ID: {spreadsheet_id} from URL: {request.spreadsheet_url}")
-        logger.info(f"Getting last filled rows for spreadsheet: {spreadsheet_id}, sheet: {request.sheet_name}")
+        logger.info(f"Getting last filled rows for spreadsheet: {spreadsheet_id}, sheet: {request.sheet_name}, agency: {request.agency_id}")
         
         # Determine which required columns to use
         if request.use_version == "v1":
@@ -319,6 +429,7 @@ async def get_last_filled_rows(request: LastRowRequest):
         if not values:
             return {
                 "error": "No data found in the sheet",
+                "agency_id": request.agency_id,
                 "spreadsheet_url": request.spreadsheet_url,
                 "sheet_name": request.sheet_name
             }
@@ -351,6 +462,7 @@ async def get_last_filled_rows(request: LastRowRequest):
                 max_row_with_data = max(max_row_with_data, column_info["last_row"])
         
         return {
+            "agency_id": request.agency_id,
             "spreadsheet_url": request.spreadsheet_url,
             "sheet_name": request.sheet_name,
             "version": request.use_version,
@@ -366,18 +478,106 @@ async def get_last_filled_rows(request: LastRowRequest):
         if error.resp.status == 404:
             return {
                 "error": "Spreadsheet or sheet not found. Check if the URL and sheet name are correct.",
+                "agency_id": request.agency_id,
                 "spreadsheet_url": request.spreadsheet_url
             }
         elif error.resp.status == 403:
             return {
                 "error": "Permission denied. Make sure the sheet is shared with the service account.",
+                "agency_id": request.agency_id,
                 "spreadsheet_url": request.spreadsheet_url
             }
         else:
             return {
                 "error": f"API error: {str(error)}",
+                "agency_id": request.agency_id,
                 "spreadsheet_url": request.spreadsheet_url
             }
     except Exception as e:
         logger.error(f"Error getting last filled rows: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to get last filled rows: {str(e)}")
+
+@router.get("/status/{agency_id}")
+def get_sheet_status(agency_id: str):
+    """
+    Get the status of all sheets associated with an agency
+    """
+    try:
+        # Get database connection
+        db = get_database()
+        
+        # Find all sheet records for this agency
+        records = list(db.agency_sheets.find({"agency_id": agency_id}))
+        
+        if not records:
+            return {
+                "agency_id": agency_id,
+                "sheets": []
+            }
+        
+        # Format the records for response
+        sheets = []
+        for record in records:
+            sheets.append({
+                "sheet_id": record["sheet_id"],
+                "sheet_url": record["sheet_url"],
+                "sheet_name": record.get("sheet_name", "Untitled"),
+                "status": record["status"],
+                "updated_at": record.get("updated_at", None),
+                "created_at": record.get("created_at", None)
+            })
+        
+        return {
+            "agency_id": agency_id,
+            "sheets": sheets
+        }
+            
+    except Exception as e:
+        logger.error(f"Error getting sheet status: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get sheet status: {str(e)}")
+
+# Update sheet status
+class UpdateStatusRequest(BaseModel):
+    agency_id: str
+    spreadsheet_url: str
+    status: SheetStatus
+    
+    @field_validator('agency_id')
+    def validate_agency_id(cls, v):
+        if not v:
+            raise ValueError('Agency ID is required')
+        return v
+    
+    @field_validator('spreadsheet_url')
+    def validate_spreadsheet_url(cls, v):
+        if not v:
+            raise ValueError('Spreadsheet URL is required')
+        return v
+
+@router.post("/update-status")
+def update_sheet_status(request: UpdateStatusRequest):
+    """
+    Update the status of a sheet
+    """
+    try:
+        # Extract spreadsheet ID from URL
+        spreadsheet_id = extract_spreadsheet_id(request.spreadsheet_url)
+        
+        # Update the status in the database
+        update_or_create_sheet_record(
+            agency_id=request.agency_id,
+            spreadsheet_url=request.spreadsheet_url,
+            spreadsheet_id=spreadsheet_id,
+            status=request.status
+        )
+        
+        return {
+            "success": True,
+            "agency_id": request.agency_id,
+            "spreadsheet_id": spreadsheet_id,
+            "status": request.status
+        }
+            
+    except Exception as e:
+        logger.error(f"Error updating sheet status: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to update sheet status: {str(e)}")
