@@ -97,35 +97,40 @@ REQUIRED_COLUMNS = [
     "Last Name",
     "Website Link",
     "LinkedIn",
-    "Avatar Deets",
-    "Recent LinkedIn Post",
-    "Copy - Recent LinkedIn Post",
-    "AboutUs / Mission Page",
-    "Copy - AboutUs / Mission Page",
-    "E-Book Page Link",
-    "Copy - Ebook",
-    "Recent Blog",
-    "Copy - Recent Blog (3-6 Months)",
-    "Testimonials / Reviews Page Link",
-    "Copy - Testimonials / Reviews",
-    "Webinar/Events Page Link",
-    "Copy - Webinar/Events",
-    "Recent News (TBD)"
-]
-
-REQUIRED_COLUMNS_V2 = [
-    "First Name",
-    "Last Name",
-    "Website",
-    "Contact LI Profile URL",
     "Email",
     "Podcast Name",
     "Episode Link",
     "Episode Transcript",
-    "Website Content",
-    "Industry",
-    "Custom Message"
+    "Avatar Deets",
+    "Recent LinkedIn Post",
+    # "Copy - Recent LinkedIn Post",
+    "AboutUs / Mission Page",
+    # "Copy - AboutUs / Mission Page",
+    "E-Book Page Link",
+    # "Copy - Ebook",
+    "Recent Blog",
+    # "Copy - Recent Blog (3-6 Months)",
+    "Testimonials / Reviews Page Link",
+    # "Copy - Testimonials / Reviews",
+    "Webinar/Events Page Link",
+    # "Copy - Webinar/Events",
+    "Recent News (TBD)",
+    "Custom Outreach Message"
 ]
+
+# REQUIRED_COLUMNS_V2 = [
+#     "First Name",
+#     "Last Name",
+#     "Website",
+#     "Contact LI Profile URL",
+#     "Email",
+#     "Podcast Name",
+#     "Episode Link",
+#     "Episode Transcript",
+#     "Website Content",
+#     "Industry",
+#     "Custom Message"
+# ]
 
 def update_or_create_sheet_record(agency_id, spreadsheet_url, spreadsheet_id, sheet_name, status):
     """
@@ -259,7 +264,7 @@ def verify_sheet_columns(request: ColumnCheckRequest):
     """
     Verify if the Google Sheet has the required columns in the correct order
     """
-    credentials_file = "/data/url-to-email-445616-cebe4868914f.json"
+    credentials_file = "data/url-to-email-445616-cebe4868914f.json"
     
     try:
         # Extract spreadsheet ID from URL
@@ -291,12 +296,12 @@ def verify_sheet_columns(request: ColumnCheckRequest):
         misplaced_columns = []
         
         # Check which required columns are missing
-        for column in REQUIRED_COLUMNS_V2:
+        for column in REQUIRED_COLUMNS:
             if column not in headers:
                 missing_columns.append(column)
         
         # Check if columns are in the correct order
-        for i, column in enumerate(REQUIRED_COLUMNS_V2):
+        for i, column in enumerate(REQUIRED_COLUMNS):
             if i < len(headers) and column != headers[i]:
                 misplaced_columns.append({
                     "expected": column,
@@ -319,7 +324,7 @@ def verify_sheet_columns(request: ColumnCheckRequest):
                 "spreadsheet_url": request.spreadsheet_url,
                 "missing_columns": missing_columns,
                 "misplaced_columns": misplaced_columns,
-                "required_columns": REQUIRED_COLUMNS_V2,
+                "required_columns": REQUIRED_COLUMNS,
                 "found_headers": headers
             }
             
@@ -379,7 +384,7 @@ def get_last_filled_rows(request: LastRowRequest):
     """
     Get the last filled row for each of the required columns
     """
-    credentials_file = "/data/url-to-email-445616-cebe4868914f.json"
+    credentials_file = "data/url-to-email-445616-cebe4868914f.json"
     
     try:
         # Extract spreadsheet ID from URL
@@ -391,7 +396,7 @@ def get_last_filled_rows(request: LastRowRequest):
         if request.use_version == "v1":
             required_columns = REQUIRED_COLUMNS
         else:  # v2
-            required_columns = REQUIRED_COLUMNS_V2
+            required_columns = REQUIRED_COLUMNS
         
         # Set up credentials
         creds = service_account.Credentials.from_service_account_file(
