@@ -4,7 +4,7 @@ import logging
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
-from typing import Optional, Dict, Literal
+from typing import Optional, Dict, Literal, List
 import re
 from datetime import datetime
 from utils.db import MongoDB
@@ -91,6 +91,23 @@ class ColumnCheckRequest(BaseModel):
             raise ValueError('Agency ID is required')
         return v
 
+# New model for enrichment column selection - simplified
+class EnrichmentColumnsRequest(BaseModel):
+    spreadsheet_id: str
+    enrichment_columns: List[str]
+    
+    @field_validator('spreadsheet_id')
+    def validate_spreadsheet_id(cls, v):
+        if not v:
+            raise ValueError('Spreadsheet ID is required')
+        return v
+    
+    @field_validator('enrichment_columns')
+    def validate_enrichment_columns(cls, v):
+        if not v or len(v) == 0:
+            raise ValueError('At least one enrichment column must be selected')
+        return v
+
 # Required column headers in exact order
 REQUIRED_COLUMNS = [
     "Name",
@@ -118,25 +135,11 @@ REQUIRED_COLUMNS = [
     "Custom Outreach Message"
 ]
 
-# REQUIRED_COLUMNS_V2 = [
-#     "First Name",
-#     "Last Name",
-#     "Website",
-#     "Contact LI Profile URL",
-#     "Email",
-#     "Podcast Name",
-#     "Episode Link",
-#     "Episode Transcript",
-#     "Website Content",
-#     "Industry",
-#     "Custom Message"
-# ]
-
 def update_or_create_sheet_record(agency_id, spreadsheet_url, spreadsheet_id, sheet_name, status):
     """
     Update an existing sheet record or create a new one
     """
-    now = datetime.utcnow()
+    now = datetime.now()
     
     # Get database connection
     db = get_database()
@@ -148,14 +151,12 @@ def update_or_create_sheet_record(agency_id, spreadsheet_url, spreadsheet_id, sh
     })
     
     if existing_record:
-        # Update existing record
+        # Update existing record only used for updating the status
         db.agency_sheets.update_one(
             {"_id": existing_record["_id"]},
             {
                 "$set": {
                     "status": status,
-                    "sheet_url": spreadsheet_url,  # Update URL in case it changed
-                    "sheet_name": sheet_name,      # Add/update sheet name
                     "updated_at": now
                 }
             }
@@ -167,12 +168,101 @@ def update_or_create_sheet_record(agency_id, spreadsheet_url, spreadsheet_id, sh
             "agency_id": agency_id,
             "sheet_url": spreadsheet_url,
             "sheet_id": spreadsheet_id,
-            "sheet_name": sheet_name,  # Include sheet name in new records
+            "sheet_name": sheet_name,
             "status": status,
             "created_at": now,
             "updated_at": now
         })
         logger.info(f"Created new sheet record for agency {agency_id}, sheet {spreadsheet_id} with status {status}")
+
+# New functions for sheet_info management - simplified to just track enrichment data
+def update_or_create_sheet_info(spreadsheet_id, enrichment_columns):
+    """
+    Update an existing sheet_info record or create a new one with enrichment columns
+    The sheet_info database only tracks enrichment columns and their progress
+    """
+    now = datetime.now()
+    
+    # Get database connection
+    db = get_database()
+    
+    # Initialize enrichment column information structure
+    enrichment_columns_info = {}
+    for column in enrichment_columns:
+        enrichment_columns_info[column] = {
+            "last_updated_row": 0
+        }
+    
+    # Try to find an existing record for this sheet
+    existing_record = db.sheet_info.find_one({
+        "sheet_id": spreadsheet_id
+    })
+    
+    if existing_record:
+        # Update existing record but preserve last_updated_row values
+        existing_columns_info = existing_record.get("enrichment_columns_info", {})
+        
+        # Update column info while keeping existing last_updated_row values
+        for column in enrichment_columns:
+            if column in existing_columns_info:
+                enrichment_columns_info[column]["last_updated_row"] = existing_columns_info[column].get("last_updated_row", 0)
+        
+        db.sheet_info.update_one(
+            {"_id": existing_record["_id"]},
+            {
+                "$set": {
+                    "enrichment_columns": enrichment_columns,
+                    "enrichment_columns_info": enrichment_columns_info,
+                    "updated_at": now
+                }
+            }
+        )
+        logger.info(f"Updated sheet_info record for sheet {spreadsheet_id}")
+        return existing_record["_id"]
+    else:
+        # Create new record
+        result = db.sheet_info.insert_one({
+            "sheet_id": spreadsheet_id,
+            "enrichment_columns": enrichment_columns,
+            "enrichment_columns_info": enrichment_columns_info,
+            "created_at": now,
+            "updated_at": now
+        })
+        logger.info(f"Created new sheet_info record for sheet {spreadsheet_id}")
+        return result.inserted_id
+    
+def update_enrichment_column_progress(spreadsheet_id, column_name, last_updated_row):
+    """
+    Update the last updated row for a specific enrichment column
+    """
+    now = datetime.now()
+    
+    # Get database connection
+    db = get_database()
+    
+    # Try to find the record
+    existing_record = db.sheet_info.find_one({
+        "sheet_id": spreadsheet_id
+    })
+    
+    if existing_record and column_name in existing_record.get("enrichment_columns", []):
+        # Update column progress
+        update_field = f"enrichment_columns_info.{column_name}.last_updated_row"
+        
+        db.sheet_info.update_one(
+            {"_id": existing_record["_id"]},
+            {
+                "$set": {
+                    update_field: last_updated_row,
+                    "updated_at": now
+                }
+            }
+        )
+        logger.info(f"Updated progress for column {column_name} in sheet {spreadsheet_id} to row {last_updated_row}")
+        return True
+    else:
+        logger.warning(f"Could not update progress: Record not found or column not selected for enrichment")
+        return False
 
 @router.post("/verify-access")
 def verify_sheet_access(request: SheetVerifyRequest):
@@ -209,7 +299,7 @@ def verify_sheet_access(request: SheetVerifyRequest):
             agency_id=request.agency_id,
             spreadsheet_url=request.spreadsheet_url,
             spreadsheet_id=spreadsheet_id,
-            sheet_name=sheet_title,  # Save the sheet name
+            sheet_name=sheet_title,
             status="CONNECTED"
         )
         
@@ -236,12 +326,11 @@ def verify_sheet_access(request: SheetVerifyRequest):
             error_message = f"API error: {str(error)}"
         
         # Update database with NO_ACCESS status
-        # Use a placeholder for sheet_name in error cases
         update_or_create_sheet_record(
             agency_id=request.agency_id,
             spreadsheet_url=request.spreadsheet_url,
             spreadsheet_id=spreadsheet_id,
-            sheet_name="Unknown Sheet",  # Use placeholder for errors
+            sheet_name="Sheet1",
             status=status
         )
         
@@ -382,7 +471,7 @@ class LastRowRequest(BaseModel):
 @router.post("/get-last-filled-rows")
 def get_last_filled_rows(request: LastRowRequest):
     """
-    Get the last filled row for each of the required columns
+    Get the last filled row for each of the required columns and update sheet_info
     """
     credentials_file = "data/url-to-email-445616-cebe4868914f.json"
     
@@ -456,6 +545,30 @@ def get_last_filled_rows(request: LastRowRequest):
             last_filled_rows[column_name] = {
                 "last_row": last_row
             }
+            
+            # Update the sheet_info for each column that has data
+            # This keeps track of last updated rows for enrichment columns
+            if last_row > 0:
+                try:
+                    # Get database connection
+                    db = get_database()
+                    
+                    # Check if the column is selected for enrichment in sheet_info
+                    sheet_info = db.sheet_info.find_one({"sheet_id": spreadsheet_id})
+                    
+                    if sheet_info and column_name in sheet_info.get("enrichment_columns", []):
+                        # Update the last_updated_row if the current value is 0 (not yet processed)
+                        current_last_updated = sheet_info.get("enrichment_columns_info", {}).get(column_name, {}).get("last_updated_row", 0)
+                        
+                        if current_last_updated == 0:
+                            # Only initialize if not yet set
+                            update_enrichment_column_progress(
+                                spreadsheet_id=spreadsheet_id,
+                                column_name=column_name,
+                                last_updated_row=0  # Initialize as not processed
+                            )
+                except Exception as update_error:
+                    logger.warning(f"Could not update sheet_info for column {column_name}: {str(update_error)}")
         
         # Calculate the total number of filled rows and columns
         columns_with_data = 0
@@ -501,6 +614,69 @@ def get_last_filled_rows(request: LastRowRequest):
     except Exception as e:
         logger.error(f"Error getting last filled rows: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to get last filled rows: {str(e)}")
+
+# New endpoint to set enrichment columns - simplified
+@router.post("/select-enrichment-columns")
+def select_enrichment_columns(request: EnrichmentColumnsRequest):
+    """
+    Select which columns should be enriched and store in sheet_info collection
+    """
+    try:
+        spreadsheet_id = request.spreadsheet_id
+        logger.info(f"Setting enrichment columns for spreadsheet: {spreadsheet_id}")
+        
+        # Update or create sheet_info record
+        record_id = update_or_create_sheet_info(
+            spreadsheet_id=spreadsheet_id,
+            enrichment_columns=request.enrichment_columns
+        )
+        
+        return {
+            "success": True,
+            "spreadsheet_id": spreadsheet_id,
+            "enrichment_columns": request.enrichment_columns,
+            "message": "Enrichment columns selected successfully"
+        }
+            
+    except Exception as e:
+        logger.error(f"Error selecting enrichment columns: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to select enrichment columns: {str(e)}")
+
+# Get sheet_info API - simplified
+@router.get("/get-sheet-info/{spreadsheet_id}")
+def get_sheet_info(spreadsheet_id: str):
+    """
+    Get the sheet_info record for a specific sheet
+    """
+    try:
+        # Get database connection
+        db = get_database()
+        
+        # Find the sheet_info record
+        record = db.sheet_info.find_one({
+            "sheet_id": spreadsheet_id
+        })
+        
+        if not record:
+            return {
+                "success": False,
+                "spreadsheet_id": spreadsheet_id,
+                "message": "No sheet_info record found"
+            }
+        
+        # Format the record for response
+        return {
+            "success": True,
+            "spreadsheet_id": spreadsheet_id,
+            "enrichment_columns": record.get("enrichment_columns", []),
+            "enrichment_columns_info": record.get("enrichment_columns_info", {}),
+            "created_at": record.get("created_at"),
+            "updated_at": record.get("updated_at")
+        }
+            
+    except Exception as e:
+        logger.error(f"Error getting sheet_info: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get sheet_info: {str(e)}")
 
 @router.get("/status/{agency_id}")
 def get_sheet_status(agency_id: str):
@@ -573,6 +749,7 @@ def update_sheet_status(request: UpdateStatusRequest):
             agency_id=request.agency_id,
             spreadsheet_url=request.spreadsheet_url,
             spreadsheet_id=spreadsheet_id,
+            sheet_name="Sheet1",
             status=request.status
         )
         
