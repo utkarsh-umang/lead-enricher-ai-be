@@ -446,9 +446,9 @@ def verify_sheet_columns(request: ColumnCheckRequest):
 
 class LastRowRequest(BaseModel):
     spreadsheet_url: str
+    agency_id: str
     sheet_name: Optional[str] = "Sheet1"
     use_version: Optional[str] = "v2"
-    agency_id: str
     
     @field_validator('spreadsheet_url')
     def validate_spreadsheet_url(cls, v):
@@ -497,7 +497,7 @@ def get_last_filled_rows(request: LastRowRequest):
         service = build('sheets', 'v4', credentials=creds)
         
         # First, get the header row to find column positions
-        range_name = f"{request.sheet_name}!A1:ZZ1"
+        range_name = f"Sheet1!A1:ZZ1"
         result = service.spreadsheets().values().get(
             spreadsheetId=spreadsheet_id,
             range=range_name
@@ -513,7 +513,7 @@ def get_last_filled_rows(request: LastRowRequest):
                 column_positions[header] = i
         
         # Now get all data to find the last filled row for each column
-        range_name = f"{request.sheet_name}"
+        range_name = f"Sheet1!A1:ZZ2000"
         result = service.spreadsheets().values().get(
             spreadsheetId=spreadsheet_id,
             range=range_name
@@ -529,7 +529,7 @@ def get_last_filled_rows(request: LastRowRequest):
             }
         
         # Find the last row with data for each column
-        last_filled_rows: Dict[str, Dict] = {}
+        last_filled_rows = {}
         total_rows = len(values)
         
         for column_name, column_index in column_positions.items():
