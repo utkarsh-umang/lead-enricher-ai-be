@@ -175,8 +175,8 @@ def update_or_create_sheet_record(agency_id, spreadsheet_url, spreadsheet_id, sh
         })
         logger.info(f"Created new sheet record for agency {agency_id}, sheet {spreadsheet_id} with status {status}")
 
-# New functions for sheet_info management - simplified to just track enrichment data
-def update_or_create_sheet_info(spreadsheet_id, enrichment_columns):
+# Functions for sheet_info management - simplified to just track enrichment data
+def update_or_create_sheet_info(spreadsheet_id, enrichment_columns, total_rows=0):
     """
     Update an existing sheet_info record or create a new one with enrichment columns
     The sheet_info database only tracks enrichment columns and their progress
@@ -207,12 +207,17 @@ def update_or_create_sheet_info(spreadsheet_id, enrichment_columns):
             if column in existing_columns_info:
                 enrichment_columns_info[column]["last_updated_row"] = existing_columns_info[column].get("last_updated_row", 0)
         
+        # Use the provided total_rows or keep the existing value
+        if total_rows == 0:
+            total_rows = existing_record.get("total_rows", 0)
+        
         db.sheet_info.update_one(
             {"_id": existing_record["_id"]},
             {
                 "$set": {
                     "enrichment_columns": enrichment_columns,
                     "enrichment_columns_info": enrichment_columns_info,
+                    "total_rows": total_rows,
                     "updated_at": now
                 }
             }
@@ -225,6 +230,7 @@ def update_or_create_sheet_info(spreadsheet_id, enrichment_columns):
             "sheet_id": spreadsheet_id,
             "enrichment_columns": enrichment_columns,
             "enrichment_columns_info": enrichment_columns_info,
+            "total_rows": total_rows,
             "created_at": now,
             "updated_at": now
         })
@@ -531,6 +537,7 @@ def get_last_filled_rows(request: LastRowRequest):
         # Find the last row with data for each column
         last_filled_rows = {}
         total_rows = len(values)
+        max_row_with_data = 0
         
         for column_name, column_index in column_positions.items():
             last_row = 0
@@ -542,46 +549,55 @@ def get_last_filled_rows(request: LastRowRequest):
                 if column_index < len(row) and row[column_index] and row[column_index].strip():
                     last_row = row_index + 1  # Add 1 because spreadsheet rows are 1-indexed
             
+            # Store the last row with data
             last_filled_rows[column_name] = {
                 "last_row": last_row
             }
             
-            # Update the sheet_info for each column that has data
-            # This keeps track of last updated rows for enrichment columns
-            if last_row > 0:
-                try:
-                    # Get database connection
-                    db = get_database()
-                    
-                    # Check if the column is selected for enrichment in sheet_info
-                    sheet_info = db.sheet_info.find_one({"sheet_id": spreadsheet_id})
-                    
-                    if sheet_info and column_name in sheet_info.get("enrichment_columns", []):
-                        # Update the last_updated_row if the current value is 0 (not yet processed)
-                        current_last_updated = sheet_info.get("enrichment_columns_info", {}).get(column_name, {}).get("last_updated_row", 0)
-                        
-                        if current_last_updated == 0:
-                            # Only initialize if not yet set
-                            update_enrichment_column_progress(
-                                spreadsheet_id=spreadsheet_id,
-                                column_name=column_name,
-                                last_updated_row=0  # Initialize as not processed
-                            )
-                except Exception as update_error:
-                    logger.warning(f"Could not update sheet_info for column {column_name}: {str(update_error)}")
+            # Update max_row_with_data
+            max_row_with_data = max(max_row_with_data, last_row)
         
-        # Calculate the total number of filled rows and columns
-        columns_with_data = 0
-        max_row_with_data = 0
+        # Get database connection
+        db = get_database()
         
-        for column_info in last_filled_rows.values():
-            if column_info["last_row"] > 0:
-                columns_with_data += 1
-                max_row_with_data = max(max_row_with_data, column_info["last_row"])
+        # Get the sheet_info record
+        sheet_info = db.sheet_info.find_one({"sheet_id": spreadsheet_id})
+        
+        if sheet_info:
+            # Get the current enrichment columns
+            enrichment_columns = sheet_info.get("enrichment_columns", [])
+            # Create a new enrichment_columns_info object with last_updated_row
+            enrichment_columns_info = {}
+            for column_name in enrichment_columns:
+                if column_name in last_filled_rows:
+                    enrichment_columns_info[column_name] = {
+                        "last_updated_row": last_filled_rows[column_name]["last_row"]
+                    }
+                else:
+                    # If column doesn't exist in last_filled_rows, set to 0
+                    enrichment_columns_info[column_name] = {
+                        "last_updated_row": 0
+                    }
+            # Update the sheet_info with new total_rows and completely replace enrichment_columns_info
+            db.sheet_info.update_one(
+                {"_id": sheet_info["_id"]},
+                {
+                    "$set": {
+                        "total_rows": max_row_with_data,
+                        "enrichment_columns_info": enrichment_columns_info,
+                        "updated_at": datetime.now()
+                    }
+                }
+            )
+            logger.info(f"Updated sheet_info for sheet {spreadsheet_id}: total_rows={max_row_with_data}, replaced enrichment_columns_info")
+        
+        # Calculate the number of columns with data
+        columns_with_data = sum(1 for info in last_filled_rows.values() if info["last_row"] > 0)
         
         return {
             "agency_id": request.agency_id,
             "spreadsheet_url": request.spreadsheet_url,
+            "spreadsheet_id": spreadsheet_id,
             "sheet_name": request.sheet_name,
             "version": request.use_version,
             "total_rows": total_rows,
@@ -615,7 +631,7 @@ def get_last_filled_rows(request: LastRowRequest):
         logger.error(f"Error getting last filled rows: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to get last filled rows: {str(e)}")
 
-# New endpoint to set enrichment columns - simplified
+# New endpoint to set enrichment columns
 @router.post("/select-enrichment-columns")
 def select_enrichment_columns(request: EnrichmentColumnsRequest):
     """
@@ -670,6 +686,7 @@ def get_sheet_info(spreadsheet_id: str):
             "spreadsheet_id": spreadsheet_id,
             "enrichment_columns": record.get("enrichment_columns", []),
             "enrichment_columns_info": record.get("enrichment_columns_info", {}),
+            "total_rows": record.get("total_rows", 0),
             "created_at": record.get("created_at"),
             "updated_at": record.get("updated_at")
         }
@@ -699,11 +716,17 @@ def get_sheet_status(agency_id: str):
         # Format the records for response
         sheets = []
         for record in records:
+            # Get sheet_info for additional data
+            sheet_info = db.sheet_info.find_one({"sheet_id": record["sheet_id"]})
+            total_rows = 0
+            if sheet_info:
+                total_rows = sheet_info.get("total_rows", 0)
             sheets.append({
                 "sheet_id": record["sheet_id"],
                 "sheet_url": record["sheet_url"],
                 "sheet_name": record.get("sheet_name", "Untitled"),
                 "status": record["status"],
+                "total_rows": total_rows,
                 "updated_at": record.get("updated_at", None),
                 "created_at": record.get("created_at", None)
             })
