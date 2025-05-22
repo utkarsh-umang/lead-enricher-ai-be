@@ -553,7 +553,17 @@ def get_last_filled_rows(request: LastRowRequest):
             last_filled_rows[column_name] = {
                 "last_row": last_row
             }
-            
+
+            # Store the Custom Outreach Message
+            custom_outreach_column = "Custom Outreach Message"
+            custom_outreach_last_row = 0
+            if custom_outreach_column in column_positions:
+                column_index = column_positions[custom_outreach_column]
+                for row_index in range(1, total_rows):
+                    row = values[row_index]
+                    if column_index < len(row) and row[column_index] and row[column_index].strip():
+                        custom_outreach_last_row = row_index + 1
+
             # Update max_row_with_data
             max_row_with_data = max(max_row_with_data, last_row)
         
@@ -585,7 +595,8 @@ def get_last_filled_rows(request: LastRowRequest):
                     "$set": {
                         "total_rows": max_row_with_data,
                         "enrichment_columns_info": enrichment_columns_info,
-                        "updated_at": datetime.now()
+                        "updated_at": datetime.now(),
+                        "custom_outreach_message_count": custom_outreach_last_row
                     }
                 }
             )
@@ -604,6 +615,7 @@ def get_last_filled_rows(request: LastRowRequest):
             "columns_with_data": columns_with_data,
             "max_row_with_data": max_row_with_data,
             "last_filled_rows": last_filled_rows,
+            "custom_outreach_message_count": custom_outreach_last_row,
             "column_positions": column_positions
         }
             
@@ -687,6 +699,7 @@ def get_sheet_info(spreadsheet_id: str):
             "enrichment_columns": record.get("enrichment_columns", []),
             "enrichment_columns_info": record.get("enrichment_columns_info", {}),
             "total_rows": record.get("total_rows", 0),
+            "custom_outreach_message_count": record.get("custom_outreach_message_count", 0),
             "created_at": record.get("created_at"),
             "updated_at": record.get("updated_at")
         }
