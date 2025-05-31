@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 # Define request/response models
 class OrchestratorRequest(BaseModel):
+    agency_id: str
     spreadsheet_url: str
     sheet_name: Optional[str] = "Sheet1"
     start_row: Optional[int] = 2
@@ -68,7 +69,7 @@ COLUMN_NAME_MAPPING = {
 }
 
 # Update all API endpoint URLs to match your router
-API_BASE_URL = "https://lead-enricher-ai-be-52034488741.us-central1.run.app"  # No /api prefix
+API_BASE_URL = "http://localhost:8000"  # No /api prefix
 
 # API endpoint mapping
 API_ENDPOINTS = {
@@ -85,7 +86,7 @@ active_jobs = {}
 async def process_api_request(url: str, payload: Dict[str, Any], client: httpx.AsyncClient, job_id: str = None) -> Dict[str, Any]:
     """Helper function to make API requests with improved error handling"""
     # Track API call for debugging
-    call_info = {
+    call_info = {   
         "url": url,
         "payload": payload,
         "timestamp": datetime.now().isoformat()
@@ -221,7 +222,8 @@ async def orchestrate_workflow(request: OrchestratorRequest, job_id: str):
             status_payload = {
                 "spreadsheet_url": request.spreadsheet_url,
                 "sheet_name": request.sheet_name,
-                "use_version": "v2"
+                "use_version": "v2",
+                "agency_id": request.agency_id
             }
             print(f"[DEBUG] Status payload: {status_payload}")
             

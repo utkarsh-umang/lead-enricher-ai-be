@@ -18,22 +18,19 @@ class MongoDB:
     
     @classmethod
     def connect(cls):
-        """
-        Creates connection to MongoDB
-        """
         if cls.client is None:
+            logger.info("Attempting to connect with URI: %s", MONGO_URI)
             try:
                 cls.client = MongoClient(MONGO_URI)
-                # Verify connection is successful
                 cls.client.admin.command('ping')
                 cls.db = cls.client[DB_NAME]
                 logger.info("Connected to MongoDB at %s", MONGO_URI)
                 return True
             except ConnectionFailure as e:
-                logger.error("Failed to connect to MongoDB: %s", str(e))
+                logger.error("Connection failure details: %s", str(e))
                 return False
             except Exception as e:
-                logger.error("MongoDB connection error: %s", str(e))
+                logger.error("Unexpected error: %s", str(e))
                 return False
                 
     @classmethod
