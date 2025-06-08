@@ -1,5 +1,4 @@
 enricher_env
-*.json
 .DS_Store
 __pycache__
 *.pyc
@@ -8,3 +7,4 @@ __pycache__
 node_modules
 .venv
 __pycache__
+data/*.json
