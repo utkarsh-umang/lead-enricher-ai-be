@@ -1,0 +1,17 @@
+{
+  "name": "Notebook Dev Container",
+  "build": {
+    "dockerfile": "../Dockerfile",
+    "context": ".."
+  },
+  "settings": {
+    "python.defaultInterpreterPath": "/usr/local/bin/python",
+    "jupyter.jupyterServerType": "local"
+  },
+  "extensions": [
+    "ms-python.python",
+    "ms-toolsai.jupyter"
+  ],
+  "postCreateCommand": "python -m ipykernel install --user --name devcontainer-kernel --display-name 'Python (DevContainer)'",
+  "remoteUser": "root"
+}
