@@ -5,20 +5,20 @@ import logging
 
 class SiteSpider(CrawlSpider):
     name = 'site_spider'
-    allowed_domains = ['jenkinscpa.com']
-    start_urls = ['https://jenkinscpa.com']
+    allowed_domains = ['barrerascpa.com']
+    start_urls = ['https://barrerascpa.com']
 
     # Custom settings for this spider
-    custom_settings = {
-        'DOWNLOAD_DELAY': 2,
-        'CONCURRENT_REQUESTS_PER_DOMAIN': 1,
-        'RETRY_TIMES': 5,
-        'DOWNLOAD_TIMEOUT': 30,
-    }
+    # custom_settings = {
+    #     'DOWNLOAD_DELAY': 2,
+    #     'CONCURRENT_REQUESTS_PER_DOMAIN': 1,
+    #     'RETRY_TIMES': 5,
+    #     'DOWNLOAD_TIMEOUT': 30,
+    # }
 
     rules = (
         Rule(LinkExtractor(
-            allow_domains=['jenkinscpa.com'],
+            allow_domains=['barrerascpa.com'],
             deny_extensions=None,  # Use default extensions to deny
             # Only follow HTML pages
             allow=(r'.*',),
