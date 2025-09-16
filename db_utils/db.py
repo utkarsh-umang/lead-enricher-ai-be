@@ -1,21 +1,19 @@
 import logging
-import os
 from typing import Any, Dict, List, Optional
 
 from pymongo import MongoClient
 from pymongo.collection import Collection
 from pymongo.errors import PyMongoError
 
-logger = logging.getLogger(__name__)
+from core.config import settings
 
-MONGO_URI = os.getenv("MONGO_URI", "mongodb://127.0.0.1:27017/lead_enricher")
-MONGO_DB_NAME = os.getenv("MONGO_DB_NAME", "lead_enricher")
+logger = logging.getLogger(__name__)
 
 
 class MongoDB:
     client: Optional[MongoClient] = None
     db = None
-    default_db_name: str = MONGO_DB_NAME
+    default_db_name: str = settings.mongo_db_name
 
     @classmethod
     def connect(cls) -> bool:
@@ -23,9 +21,9 @@ class MongoDB:
         if cls.client is not None:
             return True
 
-        logger.info("Attempting to connect to MongoDB at %s", MONGO_URI)
+        logger.info("Attempting to connect to MongoDB at %s", settings.mongo_uri)
         try:
-            cls.client = MongoClient(MONGO_URI)
+            cls.client = MongoClient(settings.mongo_uri)
             cls.client.admin.command("ping")
             cls.db = cls.client[cls.default_db_name]
             logger.info("Connected to MongoDB database '%s'", cls.default_db_name)
@@ -52,11 +50,12 @@ class MongoDB:
             return None
         if cls.client is None:
             return None
-        if db_name:
-            return cls.client[db_name]
-        if cls.db is None:
-            cls.db = cls.client[cls.default_db_name]
-        return cls.db
+        name = db_name or cls.default_db_name
+        try:
+            return cls.client[name]
+        except PyMongoError as exc:
+            logger.error("Failed to access MongoDB database '%s': %s", name, exc)
+            return None
 
     @classmethod
     def is_connected(cls) -> bool:
@@ -91,11 +90,19 @@ class MongoDB:
 def _get_collection(collection_name: str, db_name: Optional[str] = None) -> Optional[Collection]:
     database = MongoDB.get_db(db_name)
     if database is None:
-        logger.error("MongoDB database '%s' is not available", db_name or MongoDB.default_db_name)
+        logger.error(
+            "MongoDB database '%s' is not available",
+            db_name or MongoDB.default_db_name,
+        )
         return None
     return database[collection_name]
 
-def insert_document(collection_name: str, document: Dict[str, Any], db_name: Optional[str] = None) -> Optional[str]:
+
+def insert_document(
+    collection_name: str,
+    document: Dict[str, Any],
+    db_name: Optional[str] = None,
+) -> Optional[str]:
     """Insert a single document into the specified collection."""
     collection = _get_collection(collection_name, db_name)
     if collection is None:
@@ -107,7 +114,12 @@ def insert_document(collection_name: str, document: Dict[str, Any], db_name: Opt
         logger.error("Failed to insert document into %s: %s", collection_name, exc)
         return None
 
-def insert_many_documents(collection_name: str, documents: List[Dict[str, Any]], db_name: Optional[str] = None) -> List[str]:
+
+def insert_many_documents(
+    collection_name: str,
+    documents: List[Dict[str, Any]],
+    db_name: Optional[str] = None,
+) -> List[str]:
     """Insert multiple documents at once into the specified collection."""
     if not documents:
         return []
@@ -120,6 +132,7 @@ def insert_many_documents(collection_name: str, documents: List[Dict[str, Any]],
     except PyMongoError as exc:
         logger.error("Failed to insert documents into %s: %s", collection_name, exc)
         return []
+
 
 def update_document(
     collection_name: str,
@@ -138,6 +151,7 @@ def update_document(
         logger.error("Failed to update documents in %s: %s", collection_name, exc)
         return 0
 
+
 def update_many_documents(
     collection_name: str,
     filters: Dict[str, Any],
@@ -154,6 +168,7 @@ def update_many_documents(
     except PyMongoError as exc:
         logger.error("Failed to update documents in %s: %s", collection_name, exc)
         return 0
+
 
 def fetch_documents(
     collection_name: str,

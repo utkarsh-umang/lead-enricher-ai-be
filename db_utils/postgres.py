@@ -1,14 +1,14 @@
 import logging
-import os
 from typing import Any, Dict, List, Optional, Sequence, Union
 
 import psycopg
 from psycopg import conninfo, sql
 from psycopg.errors import DatabaseError, OperationalError
 
+from core.config import settings
+
 logger = logging.getLogger(__name__)
 
-POSTGRES_DSN = os.getenv("POSTGRES_DSN", "postgresql://postgres@127.0.0.1:5432/postgres")
 _DEFAULT_KEY = "__default__"
 
 
@@ -18,8 +18,8 @@ class PostgresDB:
     @classmethod
     def _make_dsn(cls, db_name: Optional[str] = None) -> str:
         if db_name is None:
-            return POSTGRES_DSN
-        return conninfo.make_conninfo(POSTGRES_DSN, dbname=db_name)
+            return settings.postgres_dsn
+        return conninfo.make_conninfo(settings.postgres_dsn, dbname=db_name)
 
     @classmethod
     def connect(cls, db_name: Optional[str] = None) -> bool:
@@ -29,12 +29,10 @@ class PostgresDB:
         if connection is not None and not connection.closed:
             return True
 
-        logger.info(
-            "Attempting to connect to PostgreSQL using DSN: %s",
-            cls._make_dsn(db_name),
-        )
+        target_dsn = cls._make_dsn(db_name)
+        logger.info("Attempting to connect to PostgreSQL using DSN: %s", target_dsn)
         try:
-            connection = psycopg.connect(cls._make_dsn(db_name), autocommit=True)
+            connection = psycopg.connect(target_dsn, autocommit=True)
             connection.execute(sql.SQL("SELECT 1"))
             cls.connections[key] = connection
             logger.info(
@@ -104,53 +102,6 @@ class PostgresDB:
             logger.warning("Failed to query PostgreSQL status: %s", exc)
             return {"status": "error", "error": str(exc)}
 
-def fetch_records(
-    table: str,
-    columns: Optional[Sequence[str]] = None,
-    conditions: Optional[Dict[str, Any]] = None,
-    order_by: Optional[Sequence[str]] = None,
-    limit: Optional[int] = None,
-    db_name: Optional[str] = None,
-) -> List[Dict[str, Any]]:
-    """Fetch rows from a table with optional filtering, ordering, and limits."""
-    connection = PostgresDB.get_connection(db_name)
-    if connection is None:
-        logger.error("PostgreSQL connection is not available")
-        return []
-    selected_columns = (
-        sql.SQL(", ").join(sql.Identifier(col) for col in columns)
-        if columns
-        else sql.SQL("*")
-    )
-    query = sql.SQL("SELECT {columns} FROM {table}").format(
-        columns=selected_columns,
-        table=sql.Identifier(table),
-    )
-    params: Dict[str, Any] = {}
-    if conditions:
-        where_clause = sql.SQL(" AND ").join(
-            sql.SQL("{column} = {placeholder}").format(
-                column=sql.Identifier(column),
-                placeholder=sql.Placeholder(column),
-            )
-            for column in conditions.keys()
-        )
-        query += sql.SQL(" WHERE {where_clause}").format(where_clause=where_clause)
-        params.update(conditions)
-    if order_by:
-        order_clause = sql.SQL(", ").join(sql.Identifier(col) for col in order_by)
-        query += sql.SQL(" ORDER BY {order_clause}").format(order_clause=order_clause)
-    if limit is not None:
-        query += sql.SQL(" LIMIT {limit}").format(limit=sql.Literal(limit))
-    try:
-        with connection.cursor() as cur:
-            cur.execute(query, params or None)
-            rows = cur.fetchall()
-            column_names = [desc.name for desc in cur.description]
-    except (OperationalError, DatabaseError) as exc:
-        logger.error("Failed to fetch records from %s: %s", table, exc)
-        return []
-    return [dict(zip(column_names, row)) for row in rows]
 
 def insert_record(
     table: str,
@@ -329,11 +280,14 @@ def update_many_records(
 
     missing = [row for row in rows if not all(key in row for key in condition_keys)]
     if missing:
-        logger.error("All rows must include condition keys %s for bulk update of '%s'", condition_keys, table)
+        logger.error(
+            "All rows must include condition keys %s for bulk update of '%s'",
+            condition_keys,
+            table,
+        )
         return None
 
     results: List[Union[int, Sequence[Any]]] = []
-
     for row in rows:
         values = {k: v for k, v in row.items() if k not in condition_keys}
         conditions = {k: row[k] for k in condition_keys}
@@ -342,3 +296,59 @@ def update_many_records(
 
     return results
 
+
+def fetch_records(
+    table: str,
+    columns: Optional[Sequence[str]] = None,
+    conditions: Optional[Dict[str, Any]] = None,
+    order_by: Optional[Sequence[str]] = None,
+    limit: Optional[int] = None,
+    db_name: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """Fetch rows from a table with optional filtering, ordering, and limits."""
+    connection = PostgresDB.get_connection(db_name)
+    if connection is None:
+        logger.error("PostgreSQL connection is not available")
+        return []
+
+    selected_columns = (
+        sql.SQL(", ").join(sql.Identifier(col) for col in columns)
+        if columns
+        else sql.SQL("*")
+    )
+
+    query = sql.SQL("SELECT {columns} FROM {table}").format(
+        columns=selected_columns,
+        table=sql.Identifier(table),
+    )
+
+    params: Dict[str, Any] = {}
+
+    if conditions:
+        where_clause = sql.SQL(" AND ").join(
+            sql.SQL("{column} = {placeholder}").format(
+                column=sql.Identifier(column),
+                placeholder=sql.Placeholder(column),
+            )
+            for column in conditions.keys()
+        )
+        query += sql.SQL(" WHERE {where_clause}").format(where_clause=where_clause)
+        params.update(conditions)
+
+    if order_by:
+        order_clause = sql.SQL(", ").join(sql.Identifier(col) for col in order_by)
+        query += sql.SQL(" ORDER BY {order_clause}").format(order_clause=order_clause)
+
+    if limit is not None:
+        query += sql.SQL(" LIMIT {limit}").format(limit=sql.Literal(limit))
+
+    try:
+        with connection.cursor() as cur:
+            cur.execute(query, params or None)
+            rows = cur.fetchall()
+            column_names = [desc.name for desc in cur.description]
+    except (OperationalError, DatabaseError) as exc:
+        logger.error("Failed to fetch records from %s: %s", table, exc)
+        return []
+
+    return [dict(zip(column_names, row)) for row in rows]
