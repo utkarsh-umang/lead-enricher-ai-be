@@ -1,0 +1,36 @@
+services:
+  app:
+    build: .
+    container_name: lead-enricher-api
+    ports:
+      - "8002:8000"
+    environment:
+      - MONGO_URI=mongodb://mongodb:27017/lead_enricher
+      - POSTGRES_DSN=postgresql://postgres:postgres@postgres:5432/postgres
+    depends_on:
+      - postgres
+      - mongodb
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: lead-enricher-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    ports:
+      - "5434:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  mongodb:
+    image: mongo:6.0
+    container_name: lead-enricher-mongodb
+    ports:
+      - "27019:27017"
+    volumes:
+      - mongodb_data:/data/db
+
+volumes:
+  postgres_data:
+  mongodb_data:

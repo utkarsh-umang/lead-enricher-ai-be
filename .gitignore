@@ -2,6 +2,7 @@ enricher_env
 .DS_Store
 __pycache__
 *.pyc
+logs/
 *.log
 .env
 node_modules
