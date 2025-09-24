@@ -2,33 +2,30 @@ import scrapy
 from scrapy.linkextractors import LinkExtractor
 from scrapy.spiders import CrawlSpider, Rule
 import logging
+from urllib.parse import urlparse
 
 class SiteSpider(CrawlSpider):
     name = 'site_spider'
-    allowed_domains = ['barrerascpa.com']
-    start_urls = ['https://barrerascpa.com']
+    start_urls = []
 
-    # Custom settings for this spider
-    # custom_settings = {
-    #     'DOWNLOAD_DELAY': 2,
-    #     'CONCURRENT_REQUESTS_PER_DOMAIN': 1,
-    #     'RETRY_TIMES': 5,
-    #     'DOWNLOAD_TIMEOUT': 30,
-    # }
+    def __init__(self, start_url=None, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if start_url:
+            self.start_urls = [start_url]
+            parsed = urlparse(start_url)
+            domain = parsed.netloc
+            self.allowed_domains = [domain, domain.replace('www.', '')] if domain.startswith('www.') else [domain, f'www.{domain}']
+            self.logger.info(f"Set allowed_domains to {self.allowed_domains} for start_url {start_url}")
 
     rules = (
         Rule(LinkExtractor(
-            allow_domains=['barrerascpa.com'],
-            deny_extensions=None,  # Use default extensions to deny
-            # Only follow HTML pages
+            deny_extensions=None,
             allow=(r'.*',),
-            # Deny common non-HTML resources
             deny=(r'.*\.(css|js|json|xml|ico|png|jpg|jpeg|gif|pdf|doc|docx|zip|rar)$',),
         ), callback='parse_item', follow=True),
     )
 
     def start_requests(self):
-        """Override start_requests to add custom headers and error handling"""
         for url in self.start_urls:
             yield scrapy.Request(
                 url=url,
@@ -44,37 +41,13 @@ class SiteSpider(CrawlSpider):
             )
 
     def parse_item(self, response):
-        """Parse each page and extract information"""
-        # Log successful page crawl
         self.logger.info(f'Successfully crawled: {response.url}')
-        
-        # # Extract title (handle cases where title might not exist)
-        # title = response.css('title::text').get()
-        # if title:
-        #     title = title.strip()
-        
-        # # Extract meta description
-        # description = response.css('meta[name="description"]::attr(content)').get()
-        # if description:
-        #     description = description.strip()
-        
         yield {
             'url': response.url,
-            # 'status_code': response.status,
-            # 'title': title or 'No title',
-            # 'description': description or 'No description',
-            # 'page_size': len(response.body),
         }
 
     def handle_error(self, failure):
-        """Handle request failures"""
         self.logger.error(f'Request failed: {failure.request.url} - {failure.value}')
-        
-        # You could yield an item with error info if needed
         yield {
             'url': failure.request.url,
-            # 'status_code': 'ERROR',
-            # 'title': f'Error: {failure.value}',
-            # 'description': 'Failed to crawl',
-            # 'page_size': 0,
         }
