@@ -2,62 +2,27 @@ import csv
 import json
 
 BASE_PROMPT = """
-Objective: Generate initial cold emails openings for outreach, following the specific template provided below. Only modify the sections within square brackets for personalisation; all other content should remain fixed.
- 
-Instructions:
-  - Personalization Fields:
-    - Replace [FIRST NAME] with the name of the person given in the prompt.
-    - Replace [PERSONALISATION] with a short, specific comment as per the instruction given in the square bracket of [PERSONALISATION - instruction here].
-    - The short specific comment as mentioned above should provide some sort of insight and it should go along and tie in to the next line in the email template so that the overall email can make sense. 
-    - While personalizing: Write the personalization in 3rd Grade level. The sentence should not be too long and complex. Use shorter sentences and simpler words.
-  - Fixed Content:
-    - Do not change any other text in the template. All non-bracketed content should remain exactly as written, preserving the wording, tone, and format. Be very very strict on this, I don't want anything else apart from the bracketed  content to change. 
-  - Tone and Language:
-    - Keep the tone friendly and professional.
-  - Don't send anything else except for the Email opening in the output
-  - Judge if the given data point is useful for the same, if not send "NONSENSICAL DATA POINT" in the output – VERY VERY IMPORTANT
 
-Here's the template I'm using:
+I am writing cold email openings and I have multiple columns for which I need to figure out which one of them makes the most sense to use in the salutation with Hey {variable}. 
 
-Saw you are helping [their ICP, be very specific with it based on the data points] with [very specific problem they're helping their ICP with], {{First Name}} 
+For example if this was the data 
 
+ownerFullName - NA
+fullName - Nick Papadopoulos
+username - coachnicknyc
+email - marmaladeskies.store@gmail.com
+description- Marketplace At The Forge 49 Randolph Road Space M-2 Middletown, CT 06457 marmaladeskies.store@gmail.com marmalade-skies.com ... New York. You can still …
+title - Nick Papadopoulos (@coachnicknyc)
 
-[Compliment the Insight on how we think it's helping their ICP overcome that problem. Share what's the end benefits on how it's helping their ICP.]
+Then for the email I would use Hey Nick, 
 
-===================
+Important - I want to address the person behind the email, not their business entity. 
+I want you to decide out of these 5 data points which one makes the most sense for me to use as an opening, if nothing makes sense, just return “Hello” as the salutation. 
 
-Examples based on this Template:
+Instructions: Don't send anything else except for the Email opening in the output
 
-EXAMPLE - 1 : 
+Now return the salutation for this case 
 
-Saw you are helping companies with unconscious bias training, Marguerite.
-
-I think it's great how you help people see their own biases. That makes workshops better for everyone
-
-EXAMPLE - 2 :
-
-Saw you are helping organizations improve their processes and build high-performing teams, Kevin.
-
-I think it's wonderful how you help teams work together better and reach their goals. That is super important! 
-
-EXAMPLE - 3 :
-
-Saw you are helping communities in Uganda with access to healthcare, education, justice, and environmental sustainability, Steven.
-
-I think it's wonderful how you empower children and transform lives. That is super important! 
-
-===================
-
-•⁠  ⁠Do the personalization using the pool of knowledge from the data points I'm giving you
-•⁠  ⁠Looking at the data pool you'd be able to tell what's the profile of the prospect we're trying to reach out to and what kind of customers do they serve and what pain points do our prospects help their customers overcome.
-
-•⁠  ⁠An Example of an Email that is strictly following the rules:
-
-"Saw you are helping marketers adapt to the changes in digital privacy and data collection, Rydal.
-
-It's cool that you are helping them get ready for the cookieless future. That is super important!"
-
-I really like the fact that the above email is sticking to the template and using the personalization on the first line alone as mentioned in the instructions.
 """
 
 def collect_all_usable_datapoints(row, column_indices):
@@ -66,7 +31,7 @@ def collect_all_usable_datapoints(row, column_indices):
     
     for category, col_index in column_indices.items():
         # Skip non-datapoint columns like name and company
-        if category in ["First Name", "Last Name"]:
+        if category not in ["ownerFullName", "fullName", "username", "email", "description", "title"]:
             continue
             
         if col_index < len(row):
@@ -74,9 +39,9 @@ def collect_all_usable_datapoints(row, column_indices):
             
             # Check if content is usable (not empty, not "no content", etc.)
             if (content and
-                content.lower() != "no content" and 
-                content.lower() != "no meaningful content" and
-                content.lower() != "nan" and
+                # content.lower() != "no content" and 
+                # content.lower() != "no meaningful content" and
+                # content.lower() != "nan" and
                 content.strip() != ""):
                 datapoints[category] = content
     
@@ -99,12 +64,29 @@ def csv_to_batch_jsonl(file_path, output_path, model="gpt-4o-mini", max_tokens=5
         for row_num, row in enumerate(csv_reader, start=1):
             
             # Extract first name and company name with safe indexing
-            first_name = column_indices["First Name"]
-            company_name = column_indices["Company Name for Emails"]
+            ownerFullName_idx = column_indices["ownerFullName"] 
+            fullName_idx = column_indices["fullName"]
+            username_idx = column_indices["username"]
+            email_idx = column_indices["email"]
+            description_idx = column_indices["description"]
+            title_idx = column_indices["title"]
             
-                
-            first_name = row[first_name].strip() 
-            company_name = row[company_name].strip() 
+            def empty_check(row,idx):
+                if idx < len(row):
+                    value = row[idx].strip()
+                    return value if value else "NA"
+                return "NA"
+            
+
+
+            ownerFullName = empty_check(row, ownerFullName_idx)
+            fullName = empty_check(row, fullName_idx)
+            username = empty_check(row, username_idx)
+            email = empty_check(row, email_idx)
+            description = empty_check(row, description_idx)
+            title = empty_check(row, title_idx)
+            
+             
             
             
             datapoints = collect_all_usable_datapoints(row, column_indices)
@@ -118,13 +100,12 @@ def csv_to_batch_jsonl(file_path, output_path, model="gpt-4o-mini", max_tokens=5
             prompt = f"""
             {BASE_PROMPT}
 
-            Person's first name: {first_name}
-            Company name: {company_name}
-
-            Available datapoints to personalize with:
-            {datapoints_text}
-
-            Generate a personalized email using ALL the datapoints provided.
+            ownerFullName - {ownerFullName} 
+            fullName - {fullName}
+            username - {username} 
+            email - {email}
+            description- {description} 
+            title - {title} 
             """
             
             batch_request = {
@@ -153,6 +134,6 @@ def csv_to_batch_jsonl(file_path, output_path, model="gpt-4o-mini", max_tokens=5
 # Example usage:
 if __name__ == "__main__":
     csv_to_batch_jsonl(
-        file_path="No Customisation __ Set 3 - Sheet1.csv",
+        file_path="merged_apify_leads - apify_list_with_full_data.csv",
         output_path="batch_requests.jsonl"
     )
