@@ -33,7 +33,7 @@ def collect_all_usable_datapoints(row, column_indices):
     
     for category, col_index in column_indices.items():
         # Skip non-datapoint columns like name and company
-        if category not in ["ownerFullName", "fullName", "username", "email", "description", "title"]:
+        if category not in ["email", "description", "title"]:
             continue
             
         if col_index < len(row):
@@ -66,12 +66,12 @@ def csv_to_batch_jsonl(file_path, output_path, model="gpt-4o-mini", max_tokens=1
         for row_num, row in enumerate(csv_reader, start=1):
             
             # Extract first name and company name with safe indexing
-            ownerFullName_idx = column_indices["ownerFullName"] 
-            fullName_idx = column_indices["fullName"]
-            username_idx = column_indices["username"]
-            email_idx = column_indices["email"]
-            description_idx = column_indices["description"]
-            title_idx = column_indices["title"]
+            # ownerFullName_idx = column_indices["ownerFullName"] 
+            # fullName_idx = column_indices["fullName"]
+            # username_idx = column_indices["username"]
+            email_idx = column_indices["Email"]
+            description_idx = column_indices["Description"]
+            title_idx = column_indices["Title"]
             
             def empty_check(row,idx):
                 if idx < len(row):
@@ -81,9 +81,9 @@ def csv_to_batch_jsonl(file_path, output_path, model="gpt-4o-mini", max_tokens=1
             
 
 
-            ownerFullName = empty_check(row, ownerFullName_idx)
-            fullName = empty_check(row, fullName_idx)
-            username = empty_check(row, username_idx)
+            # ownerFullName = empty_check(row, ownerFullName_idx)
+            # fullName = empty_check(row, fullName_idx)
+            # username = empty_check(row, username_idx)
             email = empty_check(row, email_idx)
             description = empty_check(row, description_idx)
             title = empty_check(row, title_idx)
@@ -102,9 +102,7 @@ def csv_to_batch_jsonl(file_path, output_path, model="gpt-4o-mini", max_tokens=1
             prompt = dedent(f"""
             {BASE_PROMPT}
 
-            ownerFullName - {ownerFullName} 
-            fullName - {fullName}
-            username - {username} 
+
             email - {email}
             description- {description} 
             title - {title} 
@@ -140,6 +138,6 @@ def csv_to_batch_jsonl(file_path, output_path, model="gpt-4o-mini", max_tokens=1
 # Example usage:
 if __name__ == "__main__":
     csv_to_batch_jsonl(
-        file_path="merged_apify_leads - apify_list_with_full_data.csv",
-        output_path="full_data_batch_requests.jsonl"
+        file_path="merged_apify_leads - apify_list_without_full_data.csv",
+        output_path="no_data_batch_requests.jsonl"
     )
