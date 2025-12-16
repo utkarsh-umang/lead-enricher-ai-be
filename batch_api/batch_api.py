@@ -1,9 +1,15 @@
 import os
 from openai import OpenAI
+import csv
+from datetime import datetime
+
+
+
 
 # Set your API key
 os.environ["OPENAI_API_KEY"] = ""
 client = OpenAI()
+
 
 def submit_batch(jsonl_file):
     """Upload JSONL and create batch job"""
@@ -18,6 +24,18 @@ def submit_batch(jsonl_file):
         endpoint="/v1/chat/completions",
         completion_window="24h"
     )
+
+    # write to batch_data
+    with open("batch_data.csv", "a", newline="", encoding="utf-8") as write_file:
+        writer = csv.writer(write_file)
+
+        writer.writerow([
+            jsonl_file,
+            batch.id,
+            batch.status,
+            datetime.utcfromtimestamp(batch.created_at).isoformat()
+        ])
+
     
     print(f"Batch ID: {batch.id}")
     print(f"Status: {batch.status}")

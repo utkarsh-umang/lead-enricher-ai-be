@@ -1,5 +1,7 @@
 import csv
 import json
+from textwrap import dedent
+import re
 
 BASE_PROMPT = """
 
@@ -97,7 +99,7 @@ def csv_to_batch_jsonl(file_path, output_path, model="gpt-4o-mini", max_tokens=5
             for category, content in datapoints.items():
                 datapoints_text += f"{category}: {content}\n"
             
-            prompt = f"""
+            prompt = dedent(f"""
             {BASE_PROMPT}
 
             ownerFullName - {ownerFullName} 
@@ -106,7 +108,11 @@ def csv_to_batch_jsonl(file_path, output_path, model="gpt-4o-mini", max_tokens=5
             email - {email}
             description- {description} 
             title - {title} 
-            """
+            """).strip()
+
+
+            prompt = re.sub(r"\s+", " ", prompt).strip()
+
             
             batch_request = {
                 "custom_id": f"req{row_num}",
@@ -127,7 +133,7 @@ def csv_to_batch_jsonl(file_path, output_path, model="gpt-4o-mini", max_tokens=5
 
         with open(output_path, 'w', encoding='utf-8') as jsonl_file:
             for request in batch_requests:
-                jsonl_file.write(json.dumps(request) + '\n')
+                jsonl_file.write(json.dumps(request, ensure_ascii=False) + '\n')
 
         return len(batch_requests)
 
