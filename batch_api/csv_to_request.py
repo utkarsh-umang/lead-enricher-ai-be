@@ -49,7 +49,7 @@ def collect_all_usable_datapoints(row, column_indices):
     
     return datapoints
 
-def csv_to_batch_jsonl(file_path, output_path, model="gpt-4o-mini", max_tokens=500,temperature=0.7):
+def csv_to_batch_jsonl(file_path, output_path, model="gpt-4o-mini", max_tokens=150,temperature=0.2):
 
     with open(file_path, 'r', encoding='utf-8') as file:
         csv_reader = csv.reader(file)
@@ -123,8 +123,8 @@ def csv_to_batch_jsonl(file_path, output_path, model="gpt-4o-mini", max_tokens=5
                     "messages": [
                         {"role": "user", "content": prompt}
                     ],
-                    "max_tokens": 500,
-                    "temperature": 0.7
+                    "max_tokens": 150,
+                    "temperature": 0.2
                 }
             }
             
@@ -141,5 +141,5 @@ def csv_to_batch_jsonl(file_path, output_path, model="gpt-4o-mini", max_tokens=5
 if __name__ == "__main__":
     csv_to_batch_jsonl(
         file_path="merged_apify_leads - apify_list_with_full_data.csv",
-        output_path="batch_requests.jsonl"
+        output_path="full_data_batch_requests.jsonl"
     )
