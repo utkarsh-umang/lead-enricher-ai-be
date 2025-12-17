@@ -33,7 +33,7 @@ def submit_batch(jsonl_file):
             jsonl_file,
             batch.id,
             batch.status,
-            datetime.utcfromtimestamp(batch.created_at).isoformat()
+            datetime.utcfromtimestamp(batch.created_at).isoformat(),
         ])
 
     
@@ -72,10 +72,10 @@ def download_results(batch_id, output_file="batch_results.jsonl"):
 # Usage:
 if __name__ == "__main__":
     # Step 1: Submit
-    # batch_id = submit_batch("batch_requests.jsonl")
+    # batch_id = submit_batch("no_data_batch_requests.jsonl")
     
     # Step 2: Check status (run this later)
-    # check_status("batch_693d74a3cd208190b6702252fad148bd")
+    # check_status("batch_id")
     
     # Step 3: Download results (run when complete)
-    download_results("batch_693d74a3cd208190b6702252fad148bd")
+    download_results("batch_69419adbdb408190b53bf1ce8e3d397d")
