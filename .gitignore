@@ -11,3 +11,4 @@ data/*.json
 .ipynb_checkpoints/
 .devcontainer/
 apollo_podcast/
+apollo_podcast_urls/
