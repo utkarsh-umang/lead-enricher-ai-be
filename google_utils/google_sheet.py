@@ -1,4 +1,5 @@
 import logging
+import re
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
@@ -31,7 +32,51 @@ class GoogleSheetService:
         except Exception as e:
             logger.error(f"Failed to setup Google Sheets service: {str(e)}")
             raise
-            
+
+    def extract_spreadsheet_id(self, url: str) -> str:
+        """
+        Extract the spreadsheet ID from a Google Sheets URL.
+
+        Args:
+            url: Google Sheets URL or spreadsheet ID
+
+        Returns:
+            Spreadsheet ID. If input is a URL, extracts ID; otherwise returns as-is.
+        """
+        pattern = r'https://docs\.google\.com/spreadsheets/d/([a-zA-Z0-9-_]+)'
+        match = re.search(pattern, url)
+        if match:
+            return match.group(1)
+        return url
+
+    def list_sheets(self, spreadsheet_id: str) -> Tuple[bool, Union[List[str], str]]:
+        """
+        List all sheet names in the spreadsheet.
+
+        Args:
+            spreadsheet_id: The ID of the spreadsheet
+
+        Returns:
+            Tuple of (success, result) where result is either a list of sheet names or error message
+        """
+        try:
+            sheet_metadata = self.service.spreadsheets().get(
+                spreadsheetId=spreadsheet_id
+            ).execute()
+            sheet_names = [
+                sheet.get('properties', {}).get('title')
+                for sheet in sheet_metadata.get('sheets', [])
+            ]
+            return True, sheet_names
+        except HttpError as error:
+            error_message = f"Google Sheets API error: {str(error)}"
+            logger.error(error_message)
+            return False, error_message
+        except Exception as e:
+            error_message = f"Error listing sheets: {str(e)}"
+            logger.error(error_message)
+            return False, error_message
+
     def get_sheet_data(self, 
                       spreadsheet_id: str, 
                       range_name: str) -> Tuple[bool, Union[pd.DataFrame, str]]:
@@ -68,7 +113,72 @@ class GoogleSheetService:
             error_message = f"Error fetching sheet data: {str(e)}"
             logger.error(error_message)
             return False, error_message
-            
+
+    def get_sheet_values(self, spreadsheet_id: str, range_name: str) -> Tuple[bool, Union[List[List], str]]:
+        """
+        Get raw values from Google Sheet (list of lists) to preserve row structure.
+
+        Args:
+            spreadsheet_id: The ID of the spreadsheet
+            range_name: The range to fetch (e.g., "Sheet1!A:Z")
+
+        Returns:
+            Tuple of (success, result) where result is either raw values (list of lists) or error message
+        """
+        try:
+            result = self.service.spreadsheets().values().get(
+                spreadsheetId=spreadsheet_id,
+                range=range_name
+            ).execute()
+            values = result.get('values', [])
+            return True, values
+        except HttpError as error:
+            error_message = f"Google Sheets API error: {str(error)}"
+            logger.error(error_message)
+            return False, error_message
+        except Exception as e:
+            error_message = f"Error fetching sheet values: {str(e)}"
+            logger.error(error_message)
+            return False, error_message
+
+    def clear_and_rewrite_sheet(self, spreadsheet_id: str, sheet_name: str, data: List[List]) -> Tuple[bool, str]:
+        """
+        Clear a sheet and rewrite with new data.
+
+        Args:
+            spreadsheet_id: The ID of the spreadsheet
+            sheet_name: Name of the sheet
+            data: List of rows (list of lists) to write
+
+        Returns:
+            Tuple of (success, message)
+        """
+        try:
+            range_name = f"{sheet_name}!A:Z"
+            self.service.spreadsheets().values().clear(
+                spreadsheetId=spreadsheet_id,
+                range=range_name
+            ).execute()
+
+            if data:
+                body = {'values': data}
+                self.service.spreadsheets().values().update(
+                    spreadsheetId=spreadsheet_id,
+                    range=f"{sheet_name}!A1",
+                    valueInputOption='RAW',
+                    body=body
+                ).execute()
+                return True, f"Rewrote {sheet_name} with {len(data)} rows"
+            return True, f"Cleared {sheet_name} (no data to write)"
+        except HttpError as error:
+            error_message = f"Google Sheets API error: {str(error)}"
+            logger.error(error_message)
+            return False, error_message
+        except Exception as e:
+            error_message = f"Error clearing/rewriting sheet: {str(e)}"
+            logger.error(error_message)
+            return False, error_message
+
     def update_cell(self, 
                    spreadsheet_id: str, 
                    sheet_name: str, 
