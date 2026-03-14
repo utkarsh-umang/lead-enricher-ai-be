@@ -7,6 +7,9 @@ Mailin has no public API — this module drives the web UI to:
   3. Poll until processing completes (or timeout).
   4. Download / scrape the results and return a {email → status} map.
   5. Clean up temp files and the browser session.
+
+Also provides `resolve_catch_all_domains` (EF-13) to detect catch-all domains
+from Mailin results and pick the best candidate email for each lead.
 """
 
 from __future__ import annotations
@@ -239,6 +242,104 @@ async def _run_playwright_automation(
 # ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# EF-13: Catch-all detection and resolution
+# ---------------------------------------------------------------------------
+
+# Priority order for picking the "best guess" email on catch-all domains.
+# Indices correspond to the pattern list produced by generate_email_patterns().
+_CATCH_ALL_PRIORITY_PATTERNS = [
+    lambda f, l, d: f"{f}.{l}@{d}",   # first.last  (most common)
+    lambda f, l, d: f"{f}{l}@{d}",    # firstlast
+    lambda f, l, d: f"{f[0]}{l}@{d}", # flast
+]
+
+
+def _domain_of(email: str) -> str:
+    """Return the domain part of an email address."""
+    return email.split("@", 1)[-1].lower()
+
+
+def resolve_catch_all_domains(
+    verification_results: dict[str, str],
+    lead_patterns: dict[str, list[str]],
+) -> dict[str, dict]:
+    """
+    Detect catch-all domains and resolve the best candidate email for each lead.
+
+    Args:
+        verification_results: ``{email: status}`` map returned by Mailin.
+        lead_patterns:        ``{lead_id: [ordered pattern list]}`` — patterns
+                              must be in the same priority order as produced by
+                              ``generate_email_patterns()``.
+
+    Returns:
+        ``{lead_id: {"email": str | None, "is_catch_all": bool, "confidence": float, "status": str}}``
+    """
+    resolved: dict[str, dict] = {}
+
+    for lead_id, patterns in lead_patterns.items():
+        if not patterns:
+            resolved[lead_id] = {
+                "email": None, "is_catch_all": False,
+                "confidence": 0.0, "status": "not_found",
+            }
+            continue
+
+        # Collect statuses for this lead's patterns
+        statuses = {p.lower(): verification_results.get(p.lower(), "unknown") for p in patterns}
+        valid_emails = [e for e, s in statuses.items() if s == "valid"]
+
+        # ------------------------------------------------------------------
+        # Catch-all detection: ALL non-unknown patterns came back "valid"
+        # ------------------------------------------------------------------
+        non_unknown = [s for s in statuses.values() if s != "unknown"]
+        is_catch_all = bool(non_unknown) and all(s == "valid" for s in non_unknown)
+
+        if is_catch_all:
+            # Pick best-guess by priority: first.last > firstlast > flast
+            best_email: str | None = None
+            for pattern_email in patterns:   # patterns already in priority order
+                if pattern_email.lower() in statuses:
+                    best_email = pattern_email.lower()
+                    break  # first valid pattern = first.last format
+
+            resolved[lead_id] = {
+                "email": best_email,
+                "is_catch_all": True,
+                "confidence": 0.5,
+                "status": "catch_all",
+            }
+
+        elif valid_emails:
+            # Normal domain — one or more genuine valid emails
+            # Pick by original pattern priority order
+            best = None
+            for p in patterns:
+                if p.lower() in valid_emails:
+                    best = p.lower()
+                    break
+
+            confidence = 0.9 if len(valid_emails) == 1 else 0.85
+            resolved[lead_id] = {
+                "email": best,
+                "is_catch_all": False,
+                "confidence": confidence,
+                "status": "verified",
+            }
+
+        else:
+            # No valid emails found
+            resolved[lead_id] = {
+                "email": None,
+                "is_catch_all": False,
+                "confidence": 0.0,
+                "status": "not_found",
+            }
+
+    return resolved
+
 
 async def mailin_batch_verify(emails: list[str], config: Config) -> dict[str, str]:
     """
