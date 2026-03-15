@@ -17,7 +17,7 @@ from typing import Optional
 from email_finder.config import Config, get_config
 from email_finder.models import EmailFinderResult, LeadInput
 from email_finder.finder import find_email
-from email_finder.verification.mailin_automator import mailin_batch_verify
+from email_finder.verification.mailin_automator import mailin_submit_batch, mailin_fetch_results  # noqa: F401 (re-exported)
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +116,78 @@ def _apply_catch_all_resolution(
 
 
 # ---------------------------------------------------------------------------
-# Public entry point
+# Public entry points — individual phases
+# ---------------------------------------------------------------------------
+
+async def discover_leads(
+    leads: list[LeadInput],
+    config: Optional[Config] = None,
+) -> list[EmailFinderResult]:
+    """
+    Phase 1 only: run each lead through the discovery waterfall.
+
+    Returns a list of EmailFinderResult with ``status="pending_verification"``.
+    All candidate emails are in ``result.verification_details["all_candidates"]``.
+    """
+    if config is None:
+        config = get_config()
+
+    total = len(leads)
+    _print(f"Starting email discovery for {total} lead(s) …\n")
+
+    results: list[EmailFinderResult] = []
+    for i, lead in enumerate(leads, 1):
+        _print(f"[{i}/{total}] {lead.full_name} — searching …")
+        try:
+            result = await find_email(lead, config)
+        except Exception as exc:
+            logger.error("find_email failed for %s: %s", lead.full_name, exc)
+            result = EmailFinderResult(
+                email=None,
+                status="not_found",
+                confidence=0.0,
+                source="error",
+                discovery_log=[{"node": "orchestrator", "error": str(exc)}],
+            )
+
+        if result.email:
+            _print(f"  → candidate: {result.email}")
+        elif result.status == "not_found":
+            _print(f"  → no candidates found")
+
+        results.append(result)
+
+    return results
+
+
+def collect_candidates(results: list[EmailFinderResult]) -> list[str]:
+    """Return a deduplicated sorted list of all candidate emails across all results."""
+    all_candidates_set: set[str] = set()
+    for result in results:
+        if result.email:
+            all_candidates_set.add(result.email.lower())
+        for c in _all_candidates(result):
+            all_candidates_set.add(c.lower())
+    return sorted(all_candidates_set)
+
+
+def apply_mailin_results(
+    leads: list[LeadInput],
+    results: list[EmailFinderResult],
+    verification_map: dict[str, str],
+) -> list[EmailFinderResult]:
+    """
+    Phase 3: apply a Mailin ``{email: status}`` map to the pre-verification results.
+
+    Mutates *results* in-place and returns the same list.
+    """
+    for result in results:
+        _resolve_result(result, verification_map)
+    return _apply_catch_all_resolution(leads, results, verification_map)
+
+
+# ---------------------------------------------------------------------------
+# All-in-one entry point (kept for backwards compat)
 # ---------------------------------------------------------------------------
 
 async def find_emails_batch(
@@ -141,78 +212,29 @@ async def find_emails_batch(
     if config is None:
         config = get_config()
 
-    total = len(leads)
-    _print(f"Starting email discovery for {total} lead(s) …\n")
+    # Phase 1: Discovery
+    results = await discover_leads(leads, config)
 
-    # -----------------------------------------------------------------------
-    # Phase 1: Discovery (sequential)
-    # -----------------------------------------------------------------------
-    results: list[EmailFinderResult] = []
-
-    for i, lead in enumerate(leads, 1):
-        _print(f"[{i}/{total}] {lead.full_name} — searching …")
-        try:
-            result = await find_email(lead, config)
-        except Exception as exc:
-            logger.error("find_email failed for %s: %s", lead.full_name, exc)
-            result = EmailFinderResult(
-                email=None,
-                status="not_found",
-                confidence=0.0,
-                source="error",
-                discovery_log=[{"node": "orchestrator", "error": str(exc)}],
-            )
-
-        # Progress detail
-        if result.email:
-            _print(f"  → candidate: {result.email}")
-        elif result.status == "not_found":
-            _print(f"  → no candidates found")
-
-        results.append(result)
-
-    # -----------------------------------------------------------------------
-    # Phase 2: Collect all candidates → one Mailin batch
-    # -----------------------------------------------------------------------
-    all_candidates_set: set[str] = set()
-    for result in results:
-        if result.email:
-            all_candidates_set.add(result.email.lower())
-        for c in _all_candidates(result):
-            all_candidates_set.add(c.lower())
-
-    all_candidates_list = sorted(all_candidates_set)
-    _print(f"\n[Mailin] Uploading {len(all_candidates_list)} candidate(s) for verification …")
+    # Phase 2: Submit to Mailin → fetch results (blocking; for non-interactive use)
+    all_candidates_list = collect_candidates(results)
+    _print(f"\n[Mailin] Uploading {len(all_candidates_list)} candidate(s) …")
 
     try:
-        verification_map: dict[str, str] = await mailin_batch_verify(
-            all_candidates_list, config
-        )
+        task_id = await mailin_submit_batch(all_candidates_list, config)
+        _print(f"[Mailin] Submitted — Task ID: {task_id}. Waiting for results …")
+        verification_map = await mailin_fetch_results(task_id, all_candidates_list, config)
     except Exception as exc:
-        logger.error("Mailin batch verification failed: %s", exc)
+        logger.error("Mailin verification failed: %s", exc)
         _print(f"[Mailin] Verification failed: {exc} — returning unverified results.")
         verification_map = {}
 
-    # Summary counts
-    status_counts: dict[str, int] = {}
-    for status in verification_map.values():
-        status_counts[status] = status_counts.get(status, 0) + 1
-    summary_parts = ", ".join(f"{v} {k}" for k, v in status_counts.items())
-    _print(f"[Mailin] Verification complete. {summary_parts or 'no results'}.")
+    # Phase 3: Apply results
+    results = apply_mailin_results(leads, results, verification_map)
 
-    # -----------------------------------------------------------------------
-    # Phase 3: Resolution
-    # -----------------------------------------------------------------------
-    for result in results:
-        _resolve_result(result, verification_map)
-
-    results = _apply_catch_all_resolution(leads, results, verification_map)
-
-    # Final summary
     final_counts: dict[str, int] = {}
     for r in results:
         final_counts[r.status] = final_counts.get(r.status, 0) + 1
     summary = ", ".join(f"{v} {k}" for k, v in final_counts.items())
-    _print(f"\n[Results] {total} lead(s) processed: {summary}.")
+    _print(f"\n[Results] {len(leads)} lead(s) processed: {summary}.")
 
     return results
