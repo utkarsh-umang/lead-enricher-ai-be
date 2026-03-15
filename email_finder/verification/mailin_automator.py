@@ -31,9 +31,9 @@ logger = logging.getLogger(__name__)
 # Mailin URL constants
 # ---------------------------------------------------------------------------
 _MAILIN_BASE       = "https://app.mailin.ai"
-_MAILIN_LOGIN      = f"{_MAILIN_BASE}/login"
+_MAILIN_LOGIN      = f"{_MAILIN_BASE}/signin"
 _MAILIN_DASHBOARD  = f"{_MAILIN_BASE}/dashboard"
-_MAILIN_VERIFY     = f"{_MAILIN_BASE}/email-verification"
+_MAILIN_VERIFY     = f"{_MAILIN_BASE}/verification"
 
 # How often (seconds) to poll the page while waiting for bulk results
 _POLL_INTERVAL = 10
@@ -158,8 +158,8 @@ async def _run_playwright_automation(
             await page.goto(_MAILIN_LOGIN, wait_until="networkidle")
             await _screenshot("01_login_page")
 
-            # If already logged in, Mailin redirects away from /login
-            if "/login" not in page.url:
+            # If already logged in, Mailin redirects away from /signin
+            if "/signin" not in page.url:
                 logger.info("Already logged in (redirected to %s).", page.url)
             else:
                 # Try common selectors for email + password fields
@@ -179,8 +179,8 @@ async def _run_playwright_automation(
                 # Submit — try submit button first, then Enter key
                 submit = page.locator(
                     'button[type="submit"], input[type="submit"], '
-                    'button:has-text("Login"), button:has-text("Sign in"), '
-                    'button:has-text("Log in")'
+                    'button:has-text("Sign In"), button:has-text("Sign in"), '
+                    'button:has-text("Login"), button:has-text("Log in")'
                 ).first
                 if await submit.count():
                     await submit.click()
@@ -189,7 +189,7 @@ async def _run_playwright_automation(
 
                 try:
                     await page.wait_for_url(
-                        lambda url: "/login" not in url,
+                        lambda url: "/signin" not in url,
                         timeout=timeout_ms,
                     )
                 except PWTimeout:
@@ -207,56 +207,32 @@ async def _run_playwright_automation(
             await page.goto(_MAILIN_VERIFY, wait_until="networkidle")
             await _screenshot("04_verify_page")
 
-            # Click "Bulk" tab if present
-            bulk_tab = page.locator("text=/bulk/i").first
-            if await bulk_tab.count():
-                await bulk_tab.click()
-                await asyncio.sleep(0.5)
-
             # ------------------------------------------------------------------
-            # 3. Upload CSV
-            # From page HTML: <input type="file" id="fileInput" hidden>
-            # set_input_files works on hidden inputs without needing visibility.
+            # 3. Upload CSV via file chooser (React-friendly approach)
+            # Page has a "browse" link that triggers the OS file picker.
+            # Using expect_file_chooser fires the React change event properly.
             # ------------------------------------------------------------------
             logger.info("Uploading CSV with %d emails …", len(emails))
-            upload_input = page.locator("#fileInput")
+            try:
+                async with page.expect_file_chooser(timeout=timeout_ms) as fc_info:
+                    await page.locator("text=browse").click()
+                file_chooser = await fc_info.value
+                await file_chooser.set_files(str(csv_path))
+                logger.info("File attached via file chooser.")
+            except Exception as exc:
+                await _screenshot("05_upload_failed")
+                raise RuntimeError(f"CSV upload failed: {exc}") from exc
 
-            # Fallback to any file input if #fileInput not found
-            if not await upload_input.count():
-                upload_input = page.locator('input[type="file"]').first
-
-            for attempt in range(2):
-                try:
-                    await upload_input.set_input_files(str(csv_path))
-                    logger.info("File attached to input.")
-                    break
-                except Exception as exc:
-                    if attempt == 1:
-                        await _screenshot("05_upload_failed")
-                        raise RuntimeError(f"CSV upload failed after retry: {exc}") from exc
-                    logger.warning("Upload attempt 1 failed (%s), retrying …", exc)
-                    await asyncio.sleep(2)
-
-            # Wait for preview box to appear (signals the file was accepted)
-            await asyncio.sleep(1)
+            # Wait for the UI to register the file (React state update)
+            await asyncio.sleep(2)
             await _screenshot("06_after_upload")
 
-            # Click the verify / submit button
-            verify_btn = page.locator(
-                "button:has-text('Verify'), button:has-text('Start'), "
-                "button:has-text('Upload'), button:has-text('Check')"
-            ).first
-            if await verify_btn.count():
-                await verify_btn.click()
-                logger.info("Clicked verify button.")
-            else:
-                # Broader fallback
-                btn = page.locator("button[type='submit']").first
-                if await btn.count():
-                    await btn.click()
-                    logger.info("Clicked submit button (fallback).")
-                else:
-                    logger.warning("No verify button found — check /tmp/mailin_debug_06_after_upload.png")
+            # Confirm the "Confirm File Upload" modal if it appears
+            confirm_btn = page.locator("button:has-text('Confirm & Upload')").first
+            if await confirm_btn.count():
+                await confirm_btn.click()
+                logger.info("Clicked 'Confirm & Upload' modal button.")
+                await asyncio.sleep(1)
 
             # ------------------------------------------------------------------
             # 4. Poll for completion
