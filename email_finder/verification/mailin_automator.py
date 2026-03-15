@@ -37,9 +37,6 @@ _MAILIN_BASE   = "https://app.mailin.ai"
 _MAILIN_LOGIN  = f"{_MAILIN_BASE}/signin"
 _MAILIN_VERIFY = f"{_MAILIN_BASE}/verification"
 
-# Valid status strings returned by Mailin
-_KNOWN_STATUSES = {"valid", "invalid", "catch_all", "unknown", "risky", "disposable"}
-
 # Regex to detect status keywords in page text (fallback parser)
 _RE_STATUS = re.compile(
     r"(valid|invalid|catch[_\s]?all|unknown|risky|disposable)",
@@ -65,17 +62,32 @@ def _write_temp_csv(emails: list[str]) -> Path:
 
 
 def _parse_results_csv(csv_text: str) -> dict[str, str]:
-    """Parse a downloaded Mailin results CSV into {email: status}."""
+    """Parse a downloaded Mailin results CSV into {email: status}.
+
+    Mailin CSV columns: email, quality, result, free, role
+    The ``result`` column uses "ok" for deliverable (we normalise to "valid").
+    """
+    # Mailin "result" → our internal status
+    _RESULT_MAP = {
+        "ok":        "valid",
+        "valid":     "valid",
+        "invalid":   "invalid",
+        "catch_all": "catch_all",
+        "unknown":   "unknown",
+        "risky":     "unknown",
+        "disposable":"unknown",
+    }
+
     results: dict[str, str] = {}
     reader = csv.DictReader(csv_text.splitlines())
     for row in reader:
         email = (row.get("email") or row.get("Email") or "").strip().lower()
-        status = (
-            row.get("status") or row.get("Status") or
-            row.get("result") or row.get("Result") or "unknown"
+        raw = (
+            row.get("result") or row.get("Result") or
+            row.get("status") or row.get("Status") or "unknown"
         ).strip().lower()
         if email:
-            results[email] = status if status in _KNOWN_STATUSES else "unknown"
+            results[email] = _RESULT_MAP.get(raw, "unknown")
     return results
 
 
@@ -346,17 +358,53 @@ async def _playwright_fetch(
                     "Wait for Mailin to finish, then re-run the results notebook."
                 )
 
-            # Download the results CSV
+            # Download the results CSV.
+            # Mailin uses a JS blob download (XHR → blob URL → programmatic click),
+            # so Playwright's expect_download won't fire.
+            # Instead we intercept the XHR response that contains the CSV data.
+            captured_csv: list[str] = []
+
+            async def _capture_csv(response) -> None:
+                """Store response body if it looks like a CSV download."""
+                ct  = response.headers.get("content-type", "").lower()
+                cd  = response.headers.get("content-disposition", "").lower()
+                url = response.url.lower()
+                if "csv" in ct or "attachment" in cd or "csv" in url or "download" in url:
+                    try:
+                        body = await response.body()
+                        text = body.decode("utf-8", errors="replace")
+                        if text.strip():
+                            captured_csv.append(text)
+                            logger.debug("Captured CSV response from %s", response.url)
+                    except Exception:
+                        pass
+
+            page.on("response", _capture_csv)
+
             try:
-                async with page.expect_download(timeout=timeout_ms) as dl_info:
-                    # Download icon is the last <a> in the Action column
-                    await row.locator("a").last.click()
-                download = await dl_info.value
-                raw = Path(await download.path()).read_text(encoding="utf-8")
-                results = _parse_results_csv(raw)
-                logger.info("Parsed %d rows from downloaded CSV.", len(results))
-            except Exception as exc:
-                logger.warning("Download failed (%s) — falling back to page scrape.", exc)
+                # 1. Open the download dropdown
+                await row.locator(".download-btn").click()
+
+                # 2. Wait for the "All" option to be visible, then click it
+                all_option = page.locator(
+                    f"a.filter-option[data-statuses='all'][data-task-id='{task_id}']"
+                )
+                await all_option.wait_for(state="visible", timeout=10_000)
+                await _screenshot(page, "11_download_dropdown")
+                await all_option.click()
+
+                # 3. Give the XHR request time to complete
+                await asyncio.sleep(4)
+                await _screenshot(page, "12_after_download_click")
+
+            finally:
+                page.remove_listener("response", _capture_csv)
+
+            if captured_csv:
+                results = _parse_results_csv(captured_csv[0])
+                logger.info("Parsed %d rows from intercepted CSV response.", len(results))
+            else:
+                logger.warning("No CSV response captured — falling back to page scrape.")
                 content = await page.content()
                 results = _parse_results_table(content, emails)
                 logger.info("Parsed %d rows from page content (fallback).", len(results))
