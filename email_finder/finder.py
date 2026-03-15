@@ -45,16 +45,21 @@ def _ts() -> str:
 
 
 def _log_entry(node: str, result: NodeResult) -> dict:
+    entry_result: dict = {
+        "found_email": result.found_email,
+        "found_emails": result.found_emails,
+        "confidence": result.confidence,
+        "error": result.error,
+        "data_keys": list(result.data.keys()),
+    }
+    # Include Perplexity prompt + raw response for debugging
+    if "raw_response" in result.data:
+        entry_result["prompt"] = result.data.get("prompt", "")
+        entry_result["raw_response"] = result.data["raw_response"]
     return {
         "node": node,
         "action": "run",
-        "result": {
-            "found_email": result.found_email,
-            "found_emails": result.found_emails,
-            "confidence": result.confidence,
-            "error": result.error,
-            "data_keys": list(result.data.keys()),
-        },
+        "result": entry_result,
         "timestamp": _ts(),
     }
 

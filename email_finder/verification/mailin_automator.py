@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Mailin URL constants
 # ---------------------------------------------------------------------------
-_MAILIN_BASE       = "https://app.mailin.io"
+_MAILIN_BASE       = "https://app.mailin.ai"
 _MAILIN_LOGIN      = f"{_MAILIN_BASE}/login"
 _MAILIN_DASHBOARD  = f"{_MAILIN_BASE}/dashboard"
 _MAILIN_VERIFY     = f"{_MAILIN_BASE}/email-verification"
@@ -116,13 +116,14 @@ async def _run_playwright_automation(
     emails: list[str],
     csv_path: Path,
     config: Config,
+    headless: bool = True,
 ) -> dict[str, str]:
     """
-    Drive the Mailin web UI via Playwright (exposed through Crawl4AI's
-    underlying browser) to upload *csv_path* and return verification results.
+    Drive the Mailin web UI via Playwright to upload *csv_path* and return
+    verification results.
 
-    Uses Playwright directly for fine-grained interaction (form fills, file
-    upload, polling) while delegating browser lifecycle to Crawl4AI.
+    Set ``headless=False`` (via ``mailin_batch_verify(..., headless=False)``)
+    to open a visible browser window for debugging.
     """
     try:
         from playwright.async_api import async_playwright, TimeoutError as PWTimeout
@@ -135,10 +136,19 @@ async def _run_playwright_automation(
     results: dict[str, str] = {}
 
     async with async_playwright() as pw:
-        browser = await pw.chromium.launch(headless=True)
+        browser = await pw.chromium.launch(headless=headless)
         context = await browser.new_context()
         page = await context.new_page()
         page.set_default_timeout(timeout_ms)
+
+        async def _screenshot(label: str) -> None:
+            """Save a debug screenshot to /tmp; logs the path."""
+            try:
+                path = f"/tmp/mailin_debug_{label}.png"
+                await page.screenshot(path=path, full_page=True)
+                logger.info("Screenshot saved: %s", path)
+            except Exception:
+                pass
 
         try:
             # ------------------------------------------------------------------
@@ -146,47 +156,107 @@ async def _run_playwright_automation(
             # ------------------------------------------------------------------
             logger.info("Navigating to Mailin login page …")
             await page.goto(_MAILIN_LOGIN, wait_until="networkidle")
+            await _screenshot("01_login_page")
 
-            await page.fill('input[type="email"], input[name="email"]', config.mailin_email)
-            await page.fill('input[type="password"], input[name="password"]', config.mailin_password)
-            await page.click('button[type="submit"]')
+            # If already logged in, Mailin redirects away from /login
+            if "/login" not in page.url:
+                logger.info("Already logged in (redirected to %s).", page.url)
+            else:
+                # Try common selectors for email + password fields
+                email_sel = (
+                    'input[type="email"], input[name="email"], '
+                    'input[placeholder*="email" i], input[id*="email" i]'
+                )
+                password_sel = (
+                    'input[type="password"], input[name="password"], '
+                    'input[placeholder*="password" i], input[id*="password" i]'
+                )
 
-            try:
-                await page.wait_for_url(f"{_MAILIN_BASE}/**", timeout=timeout_ms)
-            except PWTimeout:
-                raise RuntimeError("Mailin login failed — check credentials or login page structure.")
+                await page.locator(email_sel).first.fill(config.mailin_email)
+                await page.locator(password_sel).first.fill(config.mailin_password)
+                await _screenshot("02_login_filled")
 
-            logger.info("Logged into Mailin successfully.")
+                # Submit — try submit button first, then Enter key
+                submit = page.locator(
+                    'button[type="submit"], input[type="submit"], '
+                    'button:has-text("Login"), button:has-text("Sign in"), '
+                    'button:has-text("Log in")'
+                ).first
+                if await submit.count():
+                    await submit.click()
+                else:
+                    await page.locator(password_sel).first.press("Enter")
+
+                try:
+                    await page.wait_for_url(
+                        lambda url: "/login" not in url,
+                        timeout=timeout_ms,
+                    )
+                except PWTimeout:
+                    await _screenshot("03_login_failed")
+                    raise RuntimeError(
+                        "Mailin login failed — screenshot saved to /tmp/mailin_debug_03_login_failed.png. "
+                        "Check credentials or inspect the login page selectors."
+                    )
+
+            logger.info("Logged in. Current URL: %s", page.url)
 
             # ------------------------------------------------------------------
             # 2. Navigate to bulk verification
             # ------------------------------------------------------------------
             await page.goto(_MAILIN_VERIFY, wait_until="networkidle")
+            await _screenshot("04_verify_page")
 
-            # Try to click a "Bulk Email" tab if present
+            # Click "Bulk" tab if present
             bulk_tab = page.locator("text=/bulk/i").first
             if await bulk_tab.count():
                 await bulk_tab.click()
+                await asyncio.sleep(0.5)
 
             # ------------------------------------------------------------------
             # 3. Upload CSV
+            # From page HTML: <input type="file" id="fileInput" hidden>
+            # set_input_files works on hidden inputs without needing visibility.
             # ------------------------------------------------------------------
             logger.info("Uploading CSV with %d emails …", len(emails))
-            upload_input = page.locator('input[type="file"]').first
+            upload_input = page.locator("#fileInput")
+
+            # Fallback to any file input if #fileInput not found
+            if not await upload_input.count():
+                upload_input = page.locator('input[type="file"]').first
+
             for attempt in range(2):
                 try:
                     await upload_input.set_input_files(str(csv_path))
+                    logger.info("File attached to input.")
                     break
                 except Exception as exc:
                     if attempt == 1:
+                        await _screenshot("05_upload_failed")
                         raise RuntimeError(f"CSV upload failed after retry: {exc}") from exc
                     logger.warning("Upload attempt 1 failed (%s), retrying …", exc)
                     await asyncio.sleep(2)
 
-            # Click verify button
-            verify_btn = page.locator("button", has_text=re.compile(r"verify", re.IGNORECASE)).first
+            # Wait for preview box to appear (signals the file was accepted)
+            await asyncio.sleep(1)
+            await _screenshot("06_after_upload")
+
+            # Click the verify / submit button
+            verify_btn = page.locator(
+                "button:has-text('Verify'), button:has-text('Start'), "
+                "button:has-text('Upload'), button:has-text('Check')"
+            ).first
             if await verify_btn.count():
                 await verify_btn.click()
+                logger.info("Clicked verify button.")
+            else:
+                # Broader fallback
+                btn = page.locator("button[type='submit']").first
+                if await btn.count():
+                    await btn.click()
+                    logger.info("Clicked submit button (fallback).")
+                else:
+                    logger.warning("No verify button found — check /tmp/mailin_debug_06_after_upload.png")
 
             # ------------------------------------------------------------------
             # 4. Poll for completion
@@ -206,33 +276,36 @@ async def _run_playwright_automation(
                 if "processing" in lower or "progress" in lower:
                     logger.debug("Still processing …")
 
+            await _screenshot("07_after_processing")
+
             if not completed:
                 logger.warning(
-                    "Mailin wait timeout (%ds) reached — returning partial results.",
+                    "Mailin wait timeout (%ds) reached — screenshot: /tmp/mailin_debug_07_after_processing.png",
                     config.mailin_wait_timeout,
                 )
 
             # ------------------------------------------------------------------
             # 5. Retrieve results
             # ------------------------------------------------------------------
-            # Option A: download CSV
             try:
                 async with page.expect_download(timeout=timeout_ms) as dl_info:
-                    dl_btn = page.locator("button, a", has_text=re.compile(r"download", re.IGNORECASE)).first
+                    dl_btn = page.locator(
+                        "button:has-text('Download'), a:has-text('Download'), "
+                        "button:has-text('Export'), a:has-text('Export')"
+                    ).first
                     if await dl_btn.count():
                         await dl_btn.click()
                 download = await dl_info.value
-                import io
                 raw = Path(await download.path()).read_text(encoding="utf-8")
                 results = _parse_results_csv(raw)
                 logger.info("Results parsed from downloaded CSV (%d rows).", len(results))
             except Exception:
-                # Option B: scrape results table
                 content = await page.content()
                 results = _parse_results_table(content, emails)
                 logger.info("Results parsed from page table (%d rows).", len(results))
 
         finally:
+            await _screenshot("99_final_state")
             await context.close()
             await browser.close()
 
@@ -341,13 +414,19 @@ def resolve_catch_all_domains(
     return resolved
 
 
-async def mailin_batch_verify(emails: list[str], config: Config) -> dict[str, str]:
+async def mailin_batch_verify(
+    emails: list[str],
+    config: Config,
+    headless: bool = True,
+) -> dict[str, str]:
     """
     Automate Mailin bulk email verification.
 
     Args:
-        emails: List of email addresses to verify.
-        config: Config with Mailin credentials and timeout settings.
+        emails:   List of email addresses to verify.
+        config:   Config with Mailin credentials and timeout settings.
+        headless: Set False to open a visible browser window for debugging.
+                  Screenshots are always saved to /tmp/mailin_debug_*.png.
 
     Returns:
         Dict mapping ``email → status`` where status is one of:
@@ -364,7 +443,7 @@ async def mailin_batch_verify(emails: list[str], config: Config) -> dict[str, st
         csv_path = _write_temp_csv(emails)
         logger.info("Temp CSV written to %s", csv_path)
 
-        results = await _run_playwright_automation(emails, csv_path, config)
+        results = await _run_playwright_automation(emails, csv_path, config, headless=headless)
 
         # Ensure every submitted email has a status
         for email in emails:
