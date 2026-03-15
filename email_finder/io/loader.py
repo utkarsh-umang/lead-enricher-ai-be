@@ -41,7 +41,7 @@ DEFAULT_COLUMN_MAPPING: dict[str, str] = {
     # Website
     "Podcast Website": "website",
     "Website": "website",
-    # Social URLs
+    # Social URLs — generic
     "LinkedIn": "linkedin_url",
     "LinkedIn URL": "linkedin_url",
     "Twitter": "twitter_url",
@@ -52,6 +52,12 @@ DEFAULT_COLUMN_MAPPING: dict[str, str] = {
     "YouTube URL": "youtube_url",
     "Instagram": "instagram_url",
     "Instagram URL": "instagram_url",
+    # Social URLs — Podcast-prefixed (Google Script output)
+    "Podcast Facebook": "facebook_url",
+    "Podcast Twitter": "twitter_url",
+    "Podcast Instagram": "instagram_url",
+    "Podcast YouTube": "youtube_url",
+    "Podcast LinkedIn": "linkedin_url",
 }
 
 _LEAD_INPUT_FIELDS = set(LeadInput.model_fields.keys())
