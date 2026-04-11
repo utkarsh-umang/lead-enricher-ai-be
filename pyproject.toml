@@ -1,0 +1,2 @@
+[tool.poetry.dependencies]
+ai-agents-service = {path = "../ai-agents-service", develop = true}
