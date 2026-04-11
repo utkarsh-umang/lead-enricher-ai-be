@@ -270,3 +270,92 @@ class GoogleSheetService:
             error_message = f"Error fetching column data: {str(e)}"
             logger.error(error_message)
             return False, error_message
+        
+    def append_rows(
+        self,
+        spreadsheet_id: str,
+        sheet_name: str,
+        rows: List[List],
+    ) -> Tuple[bool, str]:
+        """Append rows to the end of a sheet."""
+        try:
+            body = {"values": rows}
+            self.service.spreadsheets().values().append(
+                spreadsheetId=spreadsheet_id,
+                range=f"{sheet_name}!A1",
+                valueInputOption="RAW",
+                insertDataOption="INSERT_ROWS",
+                body=body,
+            ).execute()
+            return True, f"Appended {len(rows)} rows to {sheet_name}"
+        except HttpError as error:
+            error_message = f"Google Sheets API error: {str(error)}"
+            logger.error(error_message)
+            return False, error_message
+        except Exception as e:
+            error_message = f"Error appending rows: {str(e)}"
+            logger.error(error_message)
+            return False, error_message
+
+
+    def delete_rows_by_indices(
+        self,
+        spreadsheet_id: str,
+        sheet_name: str,
+        row_indices: List[int],  # 0-based, not counting header
+    ) -> Tuple[bool, str]:
+        """
+        Delete specific rows by index.
+        Deletes from bottom to top to avoid index shifting.
+        row_indices are 0-based data row indices (not counting header).
+        """
+        try:
+            # Get sheet ID first
+            sheet_metadata = self.service.spreadsheets().get(
+                spreadsheetId=spreadsheet_id
+            ).execute()
+            sheet_id = None
+            for sheet in sheet_metadata.get("sheets", []):
+                if sheet["properties"]["title"] == sheet_name:
+                    sheet_id = sheet["properties"]["sheetId"]
+                    break
+
+            if sheet_id is None:
+                return False, f"Sheet '{sheet_name}' not found"
+
+            # Convert to actual sheet row indices (add 1 for header, add 1 for 0-based)
+            # Sheet rows are 1-based, row 1 is header, data starts at row 2
+            sheet_row_indices = sorted(
+                [i + 1 for i in row_indices],  # +1 to skip header row
+                reverse=True,  # delete from bottom to top
+            )
+
+            requests = [
+                {
+                    "deleteDimension": {
+                        "range": {
+                            "sheetId": sheet_id,
+                            "dimension": "ROWS",
+                            "startIndex": row_idx,      # 0-based in API
+                            "endIndex": row_idx + 1,
+                        }
+                    }
+                }
+                for row_idx in sheet_row_indices
+            ]
+
+            self.service.spreadsheets().batchUpdate(
+                spreadsheetId=spreadsheet_id,
+                body={"requests": requests},
+            ).execute()
+
+            return True, f"Deleted {len(row_indices)} rows from {sheet_name}"
+
+        except HttpError as error:
+            error_message = f"Google Sheets API error: {str(error)}"
+            logger.error(error_message)
+            return False, error_message
+        except Exception as e:
+            error_message = f"Error deleting rows: {str(e)}"
+            logger.error(error_message)
+            return False, error_message
