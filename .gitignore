@@ -12,3 +12,7 @@ data/*.json
 .devcontainer/
 apollo_podcast/
 apollo_podcast_urls/
+extraction_results/
+firecrawl_cache/
+.claude
+.cursor
