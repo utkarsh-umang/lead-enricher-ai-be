@@ -100,8 +100,11 @@ class GoogleSheetService:
             if not values:
                 return False, "No data found in specified range"
                 
-            # Convert to DataFrame
-            df = pd.DataFrame(values[1:], columns=values[0] if values else [])
+            # Pad short rows to match header width (Sheets API omits trailing empty cells)
+            headers = values[0]
+            num_cols = len(headers)
+            padded = [row + [''] * (num_cols - len(row)) for row in values[1:]]
+            df = pd.DataFrame(padded, columns=headers)
             return True, df
             
         except HttpError as error:
