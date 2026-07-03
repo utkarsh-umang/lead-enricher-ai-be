@@ -16,3 +16,5 @@ extraction_results/
 firecrawl_cache/
 .claude
 .cursor
+email_finder/notebooks/*.json
+email_finder/notebooks/*.csv
