@@ -96,6 +96,24 @@ _HOST_MIN_APPEARANCES = 5
 
 _NA_VALUES = {"", "n/a", "na", "none", "null", "-", "unknown"}
 
+# Placeholder "names" the transcript analysis emits when it can't identify a
+# real person — diarization labels (SPEAKER_03), numbered/lettered stand-ins
+# (Guest 1, Guest A), and generic role words. These are not leads.
+_JUNK_NAME_RX = re.compile(
+    r"^\s*("
+    r"speaker[\s_]?\d+|"
+    r"guest\s*[0-9a-z]?|"
+    r"host|co-?host|panelist|caller|audience|announcer|narrator|"
+    r"unknown|unnamed|anonymous|multiple guests?|various|the guest|guest speaker|"
+    r"n/?a"
+    r")\s*$",
+    re.IGNORECASE,
+)
+
+
+def _is_junk_name(name: str) -> bool:
+    return bool(_JUNK_NAME_RX.match(name or ""))
+
 
 def _clean(value: Optional[str]) -> str:
     return (value or "").strip()
@@ -309,7 +327,7 @@ def flatten_workbook(
                 if not isinstance(gu, dict):
                     continue
                 name = _clean(gu.get("guest_name"))
-                if not name:
+                if not name or _is_junk_name(name):
                     continue
                 total_guest_instances += 1
                 company = gu.get("guest_company")
