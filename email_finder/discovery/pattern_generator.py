@@ -2,8 +2,8 @@
 Email pattern generator discovery node.
 
 Generates common professional email address patterns from a lead's name and
-company domain. The resulting candidates are passed to the Mailin batch
-verifier (Epic 7) rather than verified here.
+company domain. These are unverified guesses — deliverability verification is
+not part of this pipeline.
 """
 
 from __future__ import annotations
@@ -148,8 +148,7 @@ async def generate_patterns(lead: LeadInput, config: Config) -> NodeResult:
 
     Requires a domain (from ``lead.company_domain`` or derived from
     ``lead.website``).  Returns ``NodeResult.found_emails`` with up to
-    ``config.max_patterns_per_lead`` candidates; verification is deferred to
-    the Mailin batch step (Epic 7).
+    ``config.max_patterns_per_lead`` candidates; these are unverified guesses.
     """
     # Resolve domain
     domain: str | None = lead.company_domain

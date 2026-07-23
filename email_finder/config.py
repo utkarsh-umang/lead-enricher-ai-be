@@ -2,8 +2,12 @@
 Configuration for the email_finder package.
 
 Loads settings from environment variables (via python-dotenv) with sensible
-defaults. Required credentials (Mailin, Perplexity) raise a clear error when
-missing so misconfigured environments fail fast.
+defaults. The required Perplexity credential raises a clear error when missing
+so misconfigured environments fail fast.
+
+NOTE: email verification (formerly the Mailin browser-automation step) has been
+removed from the pipeline. Discovery now emits ``unverified`` candidates; any
+verification is expected to happen in a separate step.
 """
 
 import os
@@ -15,10 +19,6 @@ load_dotenv()
 
 
 class Config(BaseModel):
-    # Mailin credentials (required)
-    mailin_email: str
-    mailin_password: str
-
     # API keys (required)
     perplexity_api_key: str
 
@@ -39,9 +39,8 @@ class Config(BaseModel):
         "transistor.fm", "redcircle.com", "megaphone.fm", "omny.fm",
     ]
 
-    # Browser automation
+    # Browser automation (discovery scraping)
     browser_timeout: int = 30       # seconds
-    mailin_wait_timeout: int = 300  # seconds to wait for bulk verify
 
     # Pattern generation
     max_patterns_per_lead: int = 10
@@ -51,8 +50,6 @@ class Config(BaseModel):
     def load_from_env(cls, values: dict) -> dict:
         """Fill missing required fields from environment variables."""
         env_map = {
-            "mailin_email": "MAILIN_EMAIL",
-            "mailin_password": "MAILIN_PASSWORD",
             "perplexity_api_key": "PERPLEXITY_API_KEY",
         }
         for field, env_var in env_map.items():

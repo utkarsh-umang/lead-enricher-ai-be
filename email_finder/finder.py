@@ -20,8 +20,9 @@ propagates them to subsequent nodes so that, e.g., a domain found by
 Perplexity is automatically available to the website scraper and pattern
 generator.
 
-NOTE: Mailin batch verification is NOT run here — that's EF-15.
-      This function returns status="pending_verification" for all candidates.
+NOTE: This pipeline no longer verifies deliverability. Discovered candidates
+      are returned with status="unverified"; any verification is a separate,
+      external step.
 """
 
 from __future__ import annotations
@@ -158,7 +159,7 @@ async def _flow_a_verify(lead: LeadInput, config: Config) -> EmailFinderResult:
 
     return EmailFinderResult(
         email=best_email,
-        status="pending_verification",
+        status="unverified" if best_email else "not_found",
         confidence=match_result.confidence,
         source="existing",
         discovery_log=log,
@@ -180,14 +181,13 @@ async def find_email(
     """
     Process a single lead through the email-finding waterfall.
 
-    Does NOT run Mailin verification — that is the batch step (EF-15).
-    Returns ``EmailFinderResult`` with:
+    Does NOT verify deliverability — verification has been removed from the
+    pipeline. Returns ``EmailFinderResult`` with:
       - ``email``: best candidate
-      - ``status``: ``"pending_verification"`` or ``"not_found"``
+      - ``status``: ``"unverified"`` or ``"not_found"``
       - ``confidence``: ownership / match confidence
       - ``discovery_log``: ordered list of node results
-      - ``verification_details["all_candidates"]``: full candidate list for
-        the Mailin batch step
+      - ``verification_details["all_candidates"]``: full candidate list
     """
     if config is None:
         config = get_config()
@@ -211,7 +211,7 @@ async def find_email(
 
     return EmailFinderResult(
         email=unique_candidates[0] if unique_candidates else None,
-        status="pending_verification" if unique_candidates else "not_found",
+        status="unverified" if unique_candidates else "not_found",
         confidence=0.0,
         source=source,
         discovery_log=log,
