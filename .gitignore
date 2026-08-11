@@ -18,3 +18,5 @@ firecrawl_cache/
 .cursor
 email_finder/notebooks/*.json
 email_finder/notebooks/*.csv
+# short-video notebook run artefacts
+short_video/notebooks/output/
