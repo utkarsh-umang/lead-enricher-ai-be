@@ -1,2 +1,9 @@
 [tool.poetry.dependencies]
-ai-agents-service = {path = "../ai-agents-service", develop = true}
+# Editable path dep so notebook edits to the agents take effect without reinstall.
+# Extras named explicitly: the notebooks import both the email finder
+# (crawl4ai/litellm/langgraph) and the short-video clip selector
+# (langchain/yt-dlp/youtube-transcript-api/isodate/google-api-python-client).
+# Note the notebooks also sys.path.insert straight at ../ai-agents-service, which
+# bypasses this resolution for `ai_agents` itself — but the third-party packages
+# these extras pull in still have to be present in the kernel's environment.
+ai-agents-service = { path = "../ai-agents-service", develop = true, extras = ["finder", "shortvideo"] }
